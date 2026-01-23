@@ -449,7 +449,17 @@ export default function CatAnalyzer() {
   const [newReminderDate, setNewReminderDate] = useState('');
   const [newReminderNotes, setNewReminderNotes] = useState('');
   const [newReminderRecurring, setNewReminderRecurring] = useState<'monthly' | 'quarterly' | 'yearly' | null>(null);
+  const [showChatModal, setShowChatModal] = useState(false);
+  const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'assistant'; content: string }[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [isChatting, setIsChatting] = useState(false);
+  const [chatCount, setChatCount] = useState(0);
+  const [showCameraModal, setShowCameraModal] = useState(false);
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [cameraError, setCameraError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
 
   // Load cats on mount
   useEffect(() => {
@@ -903,6 +913,96 @@ export default function CatAnalyzer() {
     }
   };
 
+  // Camera handling
+  const startCamera = async () => {
+    setCameraError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false,
+      });
+      setCameraStream(stream);
+      setShowCameraModal(true);
+      // Wait for modal to render, then attach stream
+      setTimeout(() => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.play();
+        }
+      }, 100);
+    } catch (err: any) {
+      console.error('Camera error:', err);
+      if (err.name === 'NotAllowedError') {
+        setCameraError('Accesso alla fotocamera negato. Controlla i permessi del browser.');
+      } else if (err.name === 'NotFoundError') {
+        setCameraError('Nessuna fotocamera trovata sul dispositivo.');
+      } else {
+        setCameraError('Impossibile accedere alla fotocamera: ' + err.message);
+      }
+    }
+  };
+
+  const stopCamera = () => {
+    if (cameraStream) {
+      cameraStream.getTracks().forEach(track => track.stop());
+      setCameraStream(null);
+    }
+    setShowCameraModal(false);
+  };
+
+  const capturePhoto = async () => {
+    if (!videoRef.current || !canvasRef.current) return;
+
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    ctx.drawImage(video, 0, 0);
+
+    canvas.toBlob(async (blob) => {
+      if (!blob) return;
+
+      const file = new File([blob], `camera-${Date.now()}.jpg`, { type: 'image/jpeg' });
+      stopCamera();
+      processFile(file);
+    }, 'image/jpeg', 0.9);
+  };
+
+  // Chat handling
+  const handleChat = async () => {
+    if (!chatInput.trim() || chatCount >= 5) return;
+
+    const userMessage = chatInput.trim();
+    setChatInput('');
+    setChatMessages(prev => [...prev, { role: 'user', content: userMessage }]);
+    setIsChatting(true);
+
+    try {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: userMessage,
+          catName: selectedCat?.name,
+        }),
+      });
+
+      if (!response.ok) throw new Error('Errore nella risposta');
+
+      const data = await response.json();
+      setChatMessages(prev => [...prev, { role: 'assistant', content: data.reply }]);
+      setChatCount(prev => prev + 1);
+    } catch (err: any) {
+      setChatMessages(prev => [...prev, { role: 'assistant', content: 'Mi dispiace, qualcosa è andato storto. Riprova!' }]);
+    } finally {
+      setIsChatting(false);
+    }
+  };
+
   // Quick note templates
   const QUICK_NOTE_TEMPLATES = [
     { emoji: '🤮', label: 'Ha vomitato' },
@@ -1151,10 +1251,10 @@ export default function CatAnalyzer() {
             {/* Feature Cards */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-12 stagger-children max-w-xl mx-auto">
               <FeatureCard
-                icon="📁"
-                title="Galleria"
-                subtitle="Carica file"
-                onClick={() => fileInputRef.current?.click()}
+                icon="📷"
+                title="Camera"
+                subtitle="Scatta foto"
+                onClick={startCamera}
               />
               <FeatureCard
                 icon="📝"
@@ -1168,7 +1268,16 @@ export default function CatAnalyzer() {
                 subtitle="Promemoria"
                 onClick={() => selectedCatId ? setShowReminderModal(true) : setShowProfileModal(true)}
               />
-              <FeatureCard icon="🤖" title="AI" subtitle="Shenzy" />
+              <FeatureCard
+                icon="🤖"
+                title="AI"
+                subtitle="Chatta"
+                onClick={() => {
+                  setChatMessages([]);
+                  setChatCount(0);
+                  setShowChatModal(true);
+                }}
+              />
             </div>
           </div>
         )}
@@ -1749,6 +1858,198 @@ export default function CatAnalyzer() {
                 ➕ Aggiungi
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Camera Error Toast */}
+      {cameraError && (
+        <div className="fixed bottom-4 left-4 right-4 z-[9999] animate-slideUp">
+          <div className="card-premium p-4 border-l-4 border-[var(--error)] bg-[var(--error-light)] max-w-md mx-auto">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm text-[var(--text-primary)]">{cameraError}</p>
+              <button
+                onClick={() => setCameraError(null)}
+                className="text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Camera Modal */}
+      {showCameraModal && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black">
+          <div className="relative w-full max-w-2xl">
+            {/* Camera View */}
+            <div className="relative rounded-2xl overflow-hidden bg-black">
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                className="w-full h-auto max-h-[70vh] object-contain"
+              />
+
+              {/* Capture Button */}
+              <div className="absolute bottom-6 left-0 right-0 flex justify-center gap-4">
+                <button
+                  onClick={stopCamera}
+                  className="w-14 h-14 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center text-white text-2xl hover:bg-white/30 transition-colors"
+                  type="button"
+                >
+                  ✕
+                </button>
+                <button
+                  onClick={capturePhoto}
+                  className="w-20 h-20 rounded-full bg-white flex items-center justify-center shadow-lg hover:scale-105 transition-transform"
+                  type="button"
+                >
+                  <div className="w-16 h-16 rounded-full border-4 border-[var(--accent-primary)]" />
+                </button>
+                <div className="w-14 h-14" /> {/* Spacer for balance */}
+              </div>
+            </div>
+
+            <p className="text-white/60 text-center text-sm mt-4">
+              Inquadra il tuo gatto e scatta una foto
+            </p>
+          </div>
+
+          {/* Hidden canvas for capture */}
+          <canvas ref={canvasRef} className="hidden" />
+        </div>
+      )}
+
+      {/* Chat Modal */}
+      {showChatModal && (
+        <div
+          className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShowChatModal(false);
+            }
+          }}
+        >
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+          <div
+            className="relative card-elevated p-6 w-full max-w-md animate-scaleIn flex flex-col"
+            style={{ zIndex: 10000, maxHeight: '80vh' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <ShenzyMascot mood="happy" size="sm" />
+                <div>
+                  <h2 className="text-heading text-[var(--text-primary)]">Chatta con Shenzy</h2>
+                  <p className="text-xs text-[var(--text-tertiary)]">
+                    {5 - chatCount} messaggi rimanenti
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowChatModal(false)}
+                className="text-[var(--text-muted)] hover:text-[var(--text-primary)] text-xl"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Chat Messages */}
+            <div className="flex-1 overflow-y-auto space-y-3 mb-4 min-h-[200px] max-h-[400px]">
+              {chatMessages.length === 0 ? (
+                <div className="text-center py-8">
+                  <p className="text-[var(--text-tertiary)] text-sm mb-4">
+                    Ciao! Sono Shenzy 🐱<br />
+                    Chiedimi qualsiasi cosa sui gatti!
+                  </p>
+                  <div className="flex flex-wrap gap-2 justify-center">
+                    {['Perché i gatti fanno le fusa?', 'Come capire se il mio gatto è felice?', 'Cosa significa quando miagola?'].map((q) => (
+                      <button
+                        key={q}
+                        onClick={() => {
+                          setChatInput(q);
+                        }}
+                        className="tag text-xs hover:tag-accent transition-all"
+                      >
+                        {q}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                chatMessages.map((msg, idx) => (
+                  <div
+                    key={idx}
+                    className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                  >
+                    <div
+                      className={`max-w-[80%] p-3 rounded-2xl text-sm ${
+                        msg.role === 'user'
+                          ? 'bg-[var(--accent-primary)] text-white rounded-br-sm'
+                          : 'bg-[var(--bg-secondary)] text-[var(--text-primary)] rounded-bl-sm'
+                      }`}
+                      dangerouslySetInnerHTML={{
+                        __html: msg.content
+                          .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+                          .replace(/\n/g, '<br />')
+                      }}
+                    />
+                  </div>
+                ))
+              )}
+              {isChatting && (
+                <div className="flex justify-start">
+                  <div className="bg-[var(--bg-secondary)] p-3 rounded-2xl rounded-bl-sm">
+                    <span className="flex gap-1">
+                      <span className="w-2 h-2 bg-[var(--text-muted)] rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                      <span className="w-2 h-2 bg-[var(--text-muted)] rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                      <span className="w-2 h-2 bg-[var(--text-muted)] rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Chat Input */}
+            {chatCount >= 5 ? (
+              <div className="card-soft p-4 text-center">
+                <p className="text-sm text-[var(--text-secondary)]">
+                  Hai raggiunto il limite di 5 messaggi.
+                </p>
+                <button
+                  onClick={() => {
+                    setChatMessages([]);
+                    setChatCount(0);
+                  }}
+                  className="btn-secondary mt-2 text-sm"
+                >
+                  Nuova conversazione
+                </button>
+              </div>
+            ) : (
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && !isChatting && handleChat()}
+                  placeholder="Scrivi un messaggio..."
+                  className="input-premium flex-1"
+                  disabled={isChatting}
+                />
+                <button
+                  onClick={handleChat}
+                  disabled={!chatInput.trim() || isChatting}
+                  className="btn-primary px-4"
+                  type="button"
+                >
+                  📨
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

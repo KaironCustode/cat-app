@@ -75,8 +75,20 @@ IMPORTANTE:
     const data = await response.json();
     const content = data.choices?.[0]?.message?.content ?? '[Nessuna risposta]';
 
-    return NextResponse.json({ 
+    // Generate 2-3 lucky numbers (1-90, like Italian lotto)
+    const luckyCount = Math.random() < 0.5 ? 2 : 3;
+    const luckyNumbers: number[] = [];
+    while (luckyNumbers.length < luckyCount) {
+      const num = Math.floor(Math.random() * 90) + 1;
+      if (!luckyNumbers.includes(num)) {
+        luckyNumbers.push(num);
+      }
+    }
+    luckyNumbers.sort((a, b) => a - b);
+
+    return NextResponse.json({
       horoscope: content,
+      luckyNumbers,
     });
   } catch (error: any) {
     console.error('Route error:', error);

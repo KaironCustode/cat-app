@@ -57,11 +57,33 @@ export interface CatComparison {
   summary: string;
 }
 
+export interface Reminder {
+  id: string;
+  catId: string;
+  type: 'vet' | 'nails' | 'flea' | 'vaccine' | 'grooming' | 'other';
+  title: string;
+  dueDate: string; // ISO date
+  completed: boolean;
+  completedDate?: string;
+  notes?: string;
+  recurring?: 'monthly' | 'quarterly' | 'yearly' | null;
+}
+
+export const REMINDER_TYPES = [
+  { id: 'vet', label: 'Visita veterinario', emoji: '🏥', defaultRecurring: 'yearly' as const },
+  { id: 'nails', label: 'Taglio unghie', emoji: '✂️', defaultRecurring: 'monthly' as const },
+  { id: 'flea', label: 'Antipulci', emoji: '🦟', defaultRecurring: 'monthly' as const },
+  { id: 'vaccine', label: 'Vaccino', emoji: '💉', defaultRecurring: 'yearly' as const },
+  { id: 'grooming', label: 'Toelettatura', emoji: '🛁', defaultRecurring: 'monthly' as const },
+  { id: 'other', label: 'Altro', emoji: '📌', defaultRecurring: null },
+];
+
 const STORAGE_KEYS = {
   CATS: 'shenzy_cats',
   DIARY: 'shenzy_diary',
   ACTIVE_CAT: 'shenzy_active_cat',
   SETTINGS: 'shenzy_settings',
+  REMINDERS: 'shenzy_reminders',
 };
 
 // Default cat colors (warm palette)
@@ -212,21 +234,80 @@ export function deleteDiaryEntry(id: string): boolean {
 
 // ============ MOOD DETECTION ============
 
+/**
+ * Smart mood detection that avoids false positives from negations.
+ * E.g., "non sembra irritato" should NOT trigger 'aggressive'
+ */
 export function detectMood(analysis: string): string {
   const lowerAnalysis = analysis.toLowerCase();
 
-  if (lowerAnalysis.includes('aggressiv') || lowerAnalysis.includes('arrabbiat') || lowerAnalysis.includes('irritat')) {
+  // Helper: check if keyword appears WITHOUT being negated
+  // Negation words in Italian that typically negate what follows
+  const negationPatterns = [
+    /\bnon\s+(?:\w+\s+){0,3}/g, // "non" followed by up to 3 words
+    /\bnessun[oa]?\s+(?:\w+\s+){0,2}/g, // "nessun/nessuna/nessuno"
+    /\bsenza\s+(?:\w+\s+){0,2}/g, // "senza"
+    /\bniente\s+(?:\w+\s+){0,2}/g, // "niente"
+    /\bmai\s+(?:\w+\s+){0,2}/g, // "mai"
+    /\bnon\s+c'è\s+/g, // "non c'è"
+    /\bnon\s+sembra\s+/g, // "non sembra"
+    /\bnon\s+appare\s+/g, // "non appare"
+    /\bnon\s+mostra\s+/g, // "non mostra"
+  ];
+
+  // Remove negated phrases from analysis before checking keywords
+  let cleanedAnalysis = lowerAnalysis;
+
+  // Find and remove negation contexts (phrases starting with negation words)
+  // We'll replace them with spaces to avoid false matches
+  const negationStarts = ['non ', 'nessun', 'senza ', 'niente ', 'mai '];
+
+  for (const neg of negationStarts) {
+    let idx = cleanedAnalysis.indexOf(neg);
+    while (idx !== -1) {
+      // Find the end of this phrase (next punctuation or ~30 chars)
+      const phraseEnd = cleanedAnalysis.substring(idx).search(/[.,:;!?\n]|$/);
+      const endIdx = Math.min(idx + phraseEnd, idx + 40); // Max 40 chars from negation
+
+      // Only remove if the negated phrase contains negative mood keywords
+      const negatedPhrase = cleanedAnalysis.substring(idx, endIdx);
+      const negativeKeywords = ['aggressiv', 'arrabbiat', 'irritat', 'ansios', 'stress', 'paura', 'teso', 'nervos', 'inquiet'];
+
+      const hasNegativeKeyword = negativeKeywords.some(kw => negatedPhrase.includes(kw));
+
+      if (hasNegativeKeyword) {
+        // Replace the negated phrase with spaces
+        cleanedAnalysis = cleanedAnalysis.substring(0, idx) + ' '.repeat(endIdx - idx) + cleanedAnalysis.substring(endIdx);
+      }
+
+      // Look for next occurrence
+      idx = cleanedAnalysis.indexOf(neg, idx + 1);
+    }
+  }
+
+  // Now check for moods in the cleaned analysis (negated phrases removed)
+
+  // Aggressive/Irritated - only if NOT negated
+  if (cleanedAnalysis.includes('aggressiv') || cleanedAnalysis.includes('arrabbiat') || cleanedAnalysis.includes('irritat')) {
     return 'aggressive';
   }
-  if (lowerAnalysis.includes('ansios') || lowerAnalysis.includes('stress') || lowerAnalysis.includes('paura') || lowerAnalysis.includes('teso')) {
+
+  // Anxious - only if NOT negated
+  if (cleanedAnalysis.includes('ansios') || cleanedAnalysis.includes('stress') || cleanedAnalysis.includes('paura') || cleanedAnalysis.includes('teso')) {
     return 'anxious';
   }
+
+  // Hunting - usually not negated, check original
   if (lowerAnalysis.includes('caccia') || lowerAnalysis.includes('predat') || lowerAnalysis.includes('allerta')) {
     return 'hunting';
   }
+
+  // Happy - check original (positive moods are rarely negated in context)
   if (lowerAnalysis.includes('felic') || lowerAnalysis.includes('content') || lowerAnalysis.includes('giocos')) {
     return 'happy';
   }
+
+  // Relaxed - these are the most common positive states
   if (lowerAnalysis.includes('rilassat') || lowerAnalysis.includes('tranquill') || lowerAnalysis.includes('sereno') || lowerAnalysis.includes('calmo')) {
     return 'relaxed';
   }
@@ -506,4 +587,114 @@ export function compareToBaseline(catId: string, currentMood: string): string | 
   }
 
   return `Comportamento leggermente diverso dalla baseline di ${cat.name}, ma niente di preoccupante.`;
+}
+
+// ============ REMINDERS ============
+
+export function getReminders(catId?: string): Reminder[] {
+  if (typeof window === 'undefined') return [];
+  const data = localStorage.getItem(STORAGE_KEYS.REMINDERS);
+  const reminders: Reminder[] = data ? JSON.parse(data) : [];
+
+  if (catId) {
+    return reminders.filter((r) => r.catId === catId);
+  }
+  return reminders;
+}
+
+export function addReminder(reminder: Omit<Reminder, 'id' | 'completed'>): Reminder {
+  const reminders = getReminders();
+  const newReminder: Reminder = {
+    ...reminder,
+    id: `reminder_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    completed: false,
+  };
+  reminders.push(newReminder);
+  localStorage.setItem(STORAGE_KEYS.REMINDERS, JSON.stringify(reminders));
+  return newReminder;
+}
+
+export function updateReminder(id: string, updates: Partial<Reminder>): Reminder | null {
+  const reminders = getReminders();
+  const index = reminders.findIndex((r) => r.id === id);
+  if (index === -1) return null;
+
+  reminders[index] = { ...reminders[index], ...updates };
+  localStorage.setItem(STORAGE_KEYS.REMINDERS, JSON.stringify(reminders));
+  return reminders[index];
+}
+
+export function completeReminder(id: string): Reminder | null {
+  const reminders = getReminders();
+  const index = reminders.findIndex((r) => r.id === id);
+  if (index === -1) return null;
+
+  const reminder = reminders[index];
+  reminder.completed = true;
+  reminder.completedDate = new Date().toISOString();
+
+  // If recurring, create next occurrence
+  if (reminder.recurring) {
+    const nextDate = new Date(reminder.dueDate);
+    switch (reminder.recurring) {
+      case 'monthly':
+        nextDate.setMonth(nextDate.getMonth() + 1);
+        break;
+      case 'quarterly':
+        nextDate.setMonth(nextDate.getMonth() + 3);
+        break;
+      case 'yearly':
+        nextDate.setFullYear(nextDate.getFullYear() + 1);
+        break;
+    }
+
+    const newReminder: Reminder = {
+      ...reminder,
+      id: `reminder_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      dueDate: nextDate.toISOString(),
+      completed: false,
+      completedDate: undefined,
+    };
+    reminders.push(newReminder);
+  }
+
+  localStorage.setItem(STORAGE_KEYS.REMINDERS, JSON.stringify(reminders));
+  return reminder;
+}
+
+export function deleteReminder(id: string): boolean {
+  const reminders = getReminders();
+  const filtered = reminders.filter((r) => r.id !== id);
+  if (filtered.length === reminders.length) return false;
+
+  localStorage.setItem(STORAGE_KEYS.REMINDERS, JSON.stringify(filtered));
+  return true;
+}
+
+export function getUpcomingReminders(catId?: string, daysAhead: number = 7): Reminder[] {
+  const reminders = getReminders(catId);
+  const now = new Date();
+  const futureDate = new Date();
+  futureDate.setDate(futureDate.getDate() + daysAhead);
+
+  return reminders
+    .filter((r) => {
+      if (r.completed) return false;
+      const due = new Date(r.dueDate);
+      return due >= now && due <= futureDate;
+    })
+    .sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
+}
+
+export function getOverdueReminders(catId?: string): Reminder[] {
+  const reminders = getReminders(catId);
+  const now = new Date();
+
+  return reminders
+    .filter((r) => {
+      if (r.completed) return false;
+      const due = new Date(r.dueDate);
+      return due < now;
+    })
+    .sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
 }

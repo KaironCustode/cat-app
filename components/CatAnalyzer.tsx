@@ -15,12 +15,22 @@ import {
   compareToPreviousAnalyses,
   compareToBaseline,
   getMoodEmoji,
+  getMoodLabel,
   addBaselineEntry,
+  removeBaselineEntry,
+  getReminders,
+  addReminder,
+  completeReminder,
+  deleteReminder,
+  getUpcomingReminders,
+  getOverdueReminders,
   CatProfile,
   HomeContext,
+  Reminder,
   CAT_COLORS,
   HOME_CONTEXT_LABELS,
   BASELINE_CONTEXTS,
+  REMINDER_TYPES,
 } from '@/lib/cat-storage';
 
 interface AnalysisResult {
@@ -97,11 +107,12 @@ const CatProfileModal = ({
 }: {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (name: string, color: string, homeContext?: HomeContext) => void;
+  onSave: (name: string, color: string, homeContext?: HomeContext, photoUrl?: string) => void;
   editCat?: CatProfile | null;
 }) => {
   const [name, setName] = useState(editCat?.name || '');
   const [color, setColor] = useState(editCat?.color || CAT_COLORS[0]);
+  const [photoUrl, setPhotoUrl] = useState<string | undefined>(editCat?.photoUrl);
   const [homeContext, setHomeContext] = useState<HomeContext>({
     living: editCat?.homeContext?.living || '',
     otherAnimals: editCat?.homeContext?.otherAnimals || '',
@@ -112,6 +123,7 @@ const CatProfileModal = ({
     if (editCat) {
       setName(editCat.name);
       setColor(editCat.color);
+      setPhotoUrl(editCat.photoUrl);
       setHomeContext({
         living: editCat.homeContext?.living || '',
         otherAnimals: editCat.homeContext?.otherAnimals || '',
@@ -120,9 +132,41 @@ const CatProfileModal = ({
     } else {
       setName('');
       setColor(CAT_COLORS[0]);
+      setPhotoUrl(undefined);
       setHomeContext({ living: '', otherAnimals: '', family: '' });
     }
   }, [editCat, isOpen]);
+
+  const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Resize and compress to keep storage small
+    const url = URL.createObjectURL(file);
+    try {
+      const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const el = document.createElement('img');
+        el.onload = () => resolve(el);
+        el.onerror = reject;
+        el.src = url;
+      });
+
+      const canvas = document.createElement('canvas');
+      const maxSize = 150; // Small thumbnail
+      const scale = Math.min(maxSize / img.width, maxSize / img.height, 1);
+      canvas.width = img.width * scale;
+      canvas.height = img.height * scale;
+
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+        setPhotoUrl(dataUrl);
+      }
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -160,6 +204,41 @@ const CatProfileModal = ({
         </h2>
 
         <div className="space-y-5">
+          {/* Photo Upload */}
+          <div className="text-center">
+            <label className="block text-sm font-medium text-[var(--text-secondary)] mb-3">
+              Foto del gatto
+            </label>
+            <div className="relative inline-block">
+              <div
+                className="w-24 h-24 rounded-2xl overflow-hidden bg-[var(--bg-secondary)] flex items-center justify-center cursor-pointer hover:opacity-80 transition-opacity mx-auto"
+                style={photoUrl ? {} : { backgroundColor: color }}
+                onClick={() => document.getElementById('cat-photo-input')?.click()}
+              >
+                {photoUrl ? (
+                  <img src={photoUrl} alt="Cat photo" className="w-full h-full object-cover" />
+                ) : (
+                  <span className="text-4xl opacity-60">🐱</span>
+                )}
+              </div>
+              <input
+                id="cat-photo-input"
+                type="file"
+                accept="image/*"
+                onChange={handlePhotoSelect}
+                className="hidden"
+              />
+              <button
+                type="button"
+                onClick={() => document.getElementById('cat-photo-input')?.click()}
+                className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-[var(--accent-primary)] text-white flex items-center justify-center shadow-lg hover:scale-110 transition-transform"
+              >
+                📷
+              </button>
+            </div>
+            <p className="text-xs text-[var(--text-muted)] mt-2">Clicca per aggiungere una foto</p>
+          </div>
+
           {/* Name */}
           <div>
             <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
@@ -257,6 +336,61 @@ const CatProfileModal = ({
               </div>
             </div>
           </div>
+
+          {/* Baseline Section - only show when editing and cat has baseline */}
+          {editCat && editCat.baseline && editCat.baseline.length > 0 && (
+            <div className="pt-4 border-t border-[var(--border-subtle)]">
+              <h3 className="text-sm font-semibold text-[var(--text-primary)] mb-3 flex items-center gap-2">
+                <span>🎯</span> Baseline comportamentale
+                {editCat.baselineComplete && (
+                  <span className="tag tag-success text-xs">Completa</span>
+                )}
+              </h3>
+              <p className="text-xs text-[var(--text-tertiary)] mb-3">
+                {editCat.baseline.length} osservazioni di riferimento
+              </p>
+              <div className="space-y-2 max-h-48 overflow-y-auto">
+                {editCat.baseline.map((entry) => (
+                  <div
+                    key={entry.id}
+                    className="flex items-center gap-3 p-2 bg-[var(--bg-secondary)] rounded-lg group"
+                  >
+                    {entry.imageUrl && (
+                      <img
+                        src={entry.imageUrl}
+                        alt="Baseline"
+                        className="w-10 h-10 rounded-lg object-cover flex-shrink-0"
+                      />
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm">{getMoodEmoji(entry.mood)}</span>
+                        <span className="text-sm font-medium text-[var(--text-primary)]">
+                          {getMoodLabel(entry.mood)}
+                        </span>
+                      </div>
+                      <p className="text-xs text-[var(--text-tertiary)] truncate">
+                        {entry.context} • {new Date(entry.date).toLocaleDateString('it-IT')}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (confirm('Rimuovere questa osservazione dalla baseline?')) {
+                          removeBaselineEntry(editCat.id, entry.id);
+                          // Force re-render by closing and reopening modal
+                          // (In a real app, you'd want proper state management here)
+                        }
+                      }}
+                      className="opacity-0 group-hover:opacity-100 text-[var(--error)] text-sm transition-opacity"
+                    >
+                      🗑️
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="flex gap-3 mt-6">
@@ -266,7 +400,7 @@ const CatProfileModal = ({
           <button
             onClick={() => {
               if (name.trim()) {
-                onSave(name.trim(), color, homeContext);
+                onSave(name.trim(), color, homeContext, photoUrl);
                 onClose();
               }
             }}
@@ -304,6 +438,17 @@ export default function CatAnalyzer() {
   const [editingCat, setEditingCat] = useState<CatProfile | null>(null);
   const [baselineComparison, setBaselineComparison] = useState<string | null>(null);
   const [showBaselinePrompt, setShowBaselinePrompt] = useState(false);
+  const [showQuickNoteModal, setShowQuickNoteModal] = useState(false);
+  const [quickNote, setQuickNote] = useState('');
+  const [quickNoteSaved, setQuickNoteSaved] = useState(false);
+  const [showReminderModal, setShowReminderModal] = useState(false);
+  const [reminders, setReminders] = useState<Reminder[]>([]);
+  const [upcomingReminders, setUpcomingReminders] = useState<Reminder[]>([]);
+  const [overdueReminders, setOverdueReminders] = useState<Reminder[]>([]);
+  const [newReminderType, setNewReminderType] = useState('vet');
+  const [newReminderDate, setNewReminderDate] = useState('');
+  const [newReminderNotes, setNewReminderNotes] = useState('');
+  const [newReminderRecurring, setNewReminderRecurring] = useState<'monthly' | 'quarterly' | 'yearly' | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Load cats on mount
@@ -318,6 +463,19 @@ export default function CatAnalyzer() {
       setActiveCat(loadedCats[0].id);
     }
   }, []);
+
+  // Load reminders when cat changes
+  useEffect(() => {
+    if (selectedCatId) {
+      setReminders(getReminders(selectedCatId));
+      setUpcomingReminders(getUpcomingReminders(selectedCatId, 7));
+      setOverdueReminders(getOverdueReminders(selectedCatId));
+    } else {
+      setReminders([]);
+      setUpcomingReminders([]);
+      setOverdueReminders([]);
+    }
+  }, [selectedCatId]);
 
   // Save to diary when analysis completes
   useEffect(() => {
@@ -405,6 +563,104 @@ export default function CatAnalyzer() {
     }
   };
 
+  const MAX_UPLOAD_BYTES = 3_800_000; // safety buffer for serverless body limits
+
+  async function readApiErrorMessage(res: Response): Promise<string> {
+    // Vercel/Next can return HTML/text for errors like 413; don't assume JSON.
+    if (res.status === 413) {
+      return 'File troppo pesante per essere caricato. Prova a usare una foto più leggera o ritagliata (oppure un video più corto).';
+    }
+
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      try {
+        const data = await res.json();
+        const msg =
+          data?.error ||
+          data?.message ||
+          data?.error?.message ||
+          data?.details ||
+          null;
+        if (typeof msg === 'string' && msg.trim()) return msg.trim();
+      } catch {
+        // fall through
+      }
+    }
+
+    try {
+      const text = await res.text();
+      if (text && text.trim()) {
+        // Avoid dumping HTML pages into UI
+        const compact = text.replace(/\s+/g, ' ').trim();
+        return compact.length > 160 ? `${compact.slice(0, 160)}…` : compact;
+      }
+    } catch {
+      // ignore
+    }
+
+    return `Errore (${res.status}) durante l'upload/analisi.`;
+  }
+
+  async function canvasToJpegFile(
+    canvas: HTMLCanvasElement,
+    fileNameBase: string,
+    quality: number
+  ): Promise<File> {
+    const blob: Blob =
+      (await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality))) ||
+      // Safari fallback
+      (await (async () => {
+        const dataUrl = canvas.toDataURL('image/jpeg', quality);
+        const r = await fetch(dataUrl);
+        return await r.blob();
+      })());
+
+    return new File([blob], `${fileNameBase}.jpg`, { type: 'image/jpeg' });
+  }
+
+  async function downscaleImageForUpload(file: File): Promise<File> {
+    // Some phones produce huge images; resize & compress client-side to avoid 413.
+    // If we can't decode it (e.g. HEIC in some browsers), just return original.
+    try {
+      const url = URL.createObjectURL(file);
+      try {
+        const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+          // Use a real <img> element to avoid conflict with next/image import
+          const el = document.createElement('img');
+          el.decoding = 'async';
+          el.onload = () => resolve(el);
+          el.onerror = () => reject(new Error('Impossibile leggere immagine'));
+          el.src = url;
+        });
+
+        const maxDim = 1280;
+        const longest = Math.max(img.naturalWidth || img.width, img.naturalHeight || img.height);
+        const scale = longest > maxDim ? maxDim / longest : 1;
+        const targetW = Math.max(1, Math.round((img.naturalWidth || img.width) * scale));
+        const targetH = Math.max(1, Math.round((img.naturalHeight || img.height) * scale));
+
+        // If already small-ish and below size threshold, keep original
+        if (scale === 1 && file.size <= MAX_UPLOAD_BYTES) return file;
+
+        const canvas = document.createElement('canvas');
+        canvas.width = targetW;
+        canvas.height = targetH;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return file;
+
+        ctx.drawImage(img, 0, 0, targetW, targetH);
+
+        // Quality tuned for iPhone photos while staying small
+        const compressed = await canvasToJpegFile(canvas, `upload-${Date.now()}`, 0.82);
+        return compressed;
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    } catch {
+      return file;
+    }
+  }
+
   const analyzeVideo = async (videoFile: File) => {
     try {
       setProgress(10);
@@ -487,8 +743,7 @@ export default function CatAnalyzer() {
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Errore nell'analisi");
+        throw new Error(await readApiErrorMessage(response));
       }
 
       setProgress(95);
@@ -506,7 +761,15 @@ export default function CatAnalyzer() {
     try {
       setProgress(30);
       const formData = new FormData();
-      formData.append('images', imageFile);
+
+      const uploadFile = await downscaleImageForUpload(imageFile);
+      if (uploadFile.size > MAX_UPLOAD_BYTES) {
+        throw new Error(
+          'La foto è troppo pesante. Prova a ritagliarla o a scegliere un’immagine con meno megapixel.'
+        );
+      }
+
+      formData.append('images', uploadFile);
       formData.append('isVideo', 'false');
 
       // Add cat context
@@ -528,8 +791,7 @@ export default function CatAnalyzer() {
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Errore nell'analisi");
+        throw new Error(await readApiErrorMessage(response));
       }
 
       setProgress(90);
@@ -578,16 +840,91 @@ export default function CatAnalyzer() {
     }
   };
 
-  const handleSaveProfile = (name: string, color: string, homeContext?: HomeContext) => {
+  const handleSaveQuickNote = (noteText: string) => {
+    if (!noteText.trim() || !selectedCatId) return;
+
+    addDiaryEntry({
+      catId: selectedCatId,
+      type: 'note',
+      note: noteText.trim(),
+    });
+
+    setQuickNote('');
+    setQuickNoteSaved(true);
+    setTimeout(() => {
+      setShowQuickNoteModal(false);
+      setQuickNoteSaved(false);
+    }, 1500);
+  };
+
+  const handleAddReminder = () => {
+    if (!selectedCatId || !newReminderDate) return;
+
+    const reminderType = REMINDER_TYPES.find((t) => t.id === newReminderType);
+    addReminder({
+      catId: selectedCatId,
+      type: newReminderType as Reminder['type'],
+      title: reminderType?.label || 'Promemoria',
+      dueDate: new Date(newReminderDate).toISOString(),
+      notes: newReminderNotes || undefined,
+      recurring: newReminderRecurring,
+    });
+
+    // Refresh reminders
+    setReminders(getReminders(selectedCatId));
+    setUpcomingReminders(getUpcomingReminders(selectedCatId, 7));
+    setOverdueReminders(getOverdueReminders(selectedCatId));
+
+    // Reset form
+    setNewReminderType('vet');
+    setNewReminderDate('');
+    setNewReminderNotes('');
+    setNewReminderRecurring(null);
+    setShowReminderModal(false);
+  };
+
+  const handleCompleteReminder = (id: string) => {
+    completeReminder(id);
+    if (selectedCatId) {
+      setReminders(getReminders(selectedCatId));
+      setUpcomingReminders(getUpcomingReminders(selectedCatId, 7));
+      setOverdueReminders(getOverdueReminders(selectedCatId));
+    }
+  };
+
+  const handleDeleteReminder = (id: string) => {
+    if (confirm('Eliminare questo promemoria?')) {
+      deleteReminder(id);
+      if (selectedCatId) {
+        setReminders(getReminders(selectedCatId));
+        setUpcomingReminders(getUpcomingReminders(selectedCatId, 7));
+        setOverdueReminders(getOverdueReminders(selectedCatId));
+      }
+    }
+  };
+
+  // Quick note templates
+  const QUICK_NOTE_TEMPLATES = [
+    { emoji: '🤮', label: 'Ha vomitato' },
+    { emoji: '🍽️', label: 'Non ha mangiato' },
+    { emoji: '💩', label: 'Problemi lettiera' },
+    { emoji: '😴', label: 'Dorme molto' },
+    { emoji: '🏃', label: 'Molto attivo' },
+    { emoji: '😿', label: 'Sembra triste' },
+    { emoji: '🤒', label: 'Sembra malato' },
+    { emoji: '💊', label: 'Ha preso medicina' },
+  ];
+
+  const handleSaveProfile = (name: string, color: string, homeContext?: HomeContext, photoUrl?: string) => {
     if (editingCat) {
       // Update existing cat
-      const updated = updateCat(editingCat.id, { name, color, homeContext });
+      const updated = updateCat(editingCat.id, { name, color, homeContext, photoUrl });
       if (updated) {
         setCats(cats.map(c => c.id === editingCat.id ? updated : c));
       }
     } else {
       // Create new cat
-      const newCat = saveCat({ name, color, homeContext });
+      const newCat = saveCat({ name, color, homeContext, photoUrl });
       setCats([...cats, newCat]);
       setSelectedCatId(newCat.id);
       setActiveCat(newCat.id);
@@ -684,7 +1021,11 @@ export default function CatAnalyzer() {
                       className={`tag transition-all cursor-pointer ${selectedCatId === cat.id ? 'tag-accent' : ''}`}
                       type="button"
                     >
-                      <span className="w-2 h-2 rounded-full" style={{ backgroundColor: cat.color }} />
+                      {cat.photoUrl ? (
+                        <img src={cat.photoUrl} alt={cat.name} className="w-5 h-5 rounded-full object-cover" />
+                      ) : (
+                        <span className="w-5 h-5 rounded-full flex items-center justify-center text-xs" style={{ backgroundColor: cat.color }}>🐱</span>
+                      )}
                       {cat.name}
                     </button>
                   ))}
@@ -716,6 +1057,81 @@ export default function CatAnalyzer() {
           </div>
         </div>
 
+        {/* Reminder Alerts */}
+        {(overdueReminders.length > 0 || upcomingReminders.length > 0) && !result && (
+          <div className="space-y-3 mb-6 animate-fadeIn">
+            {/* Overdue Reminders */}
+            {overdueReminders.map((r) => {
+              const type = REMINDER_TYPES.find((t) => t.id === r.type);
+              return (
+                <div
+                  key={r.id}
+                  className="card-premium p-4 border-l-4 border-[var(--error)] bg-[var(--error-light)]"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <span className="text-xl">{type?.emoji || '📌'}</span>
+                      <div>
+                        <p className="font-medium text-[var(--text-primary)]">
+                          {r.title} - <span className="text-[var(--error)]">Scaduto!</span>
+                        </p>
+                        <p className="text-xs text-[var(--text-tertiary)]">
+                          Scadeva il {new Date(r.dueDate).toLocaleDateString('it-IT')}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleCompleteReminder(r.id)}
+                        className="btn-primary text-xs px-3 py-1"
+                        type="button"
+                      >
+                        ✓ Fatto
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Upcoming Reminders */}
+            {upcomingReminders.slice(0, 2).map((r) => {
+              const type = REMINDER_TYPES.find((t) => t.id === r.type);
+              const daysUntil = Math.ceil(
+                (new Date(r.dueDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+              );
+              return (
+                <div key={r.id} className="card-soft p-4 border-l-4 border-[var(--accent-primary)]">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <span className="text-xl">{type?.emoji || '📌'}</span>
+                      <div>
+                        <p className="font-medium text-[var(--text-primary)]">{r.title}</p>
+                        <p className="text-xs text-[var(--text-tertiary)]">
+                          {daysUntil === 0
+                            ? 'Oggi!'
+                            : daysUntil === 1
+                            ? 'Domani'
+                            : `Tra ${daysUntil} giorni`}
+                          {' • '}
+                          {new Date(r.dueDate).toLocaleDateString('it-IT')}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleCompleteReminder(r.id)}
+                      className="btn-secondary text-xs px-3 py-1"
+                      type="button"
+                    >
+                      ✓ Fatto
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
         {/* Hero Section - Only when no preview and no result */}
         {!preview && !result && (
           <div className="text-center mb-12 animate-fadeIn">
@@ -733,12 +1149,24 @@ export default function CatAnalyzer() {
             </p>
 
             {/* Feature Cards */}
-            <div className="grid grid-cols-2 gap-4 mb-12 stagger-children max-w-md mx-auto">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-12 stagger-children max-w-xl mx-auto">
               <FeatureCard
                 icon="📁"
                 title="Galleria"
                 subtitle="Carica file"
                 onClick={() => fileInputRef.current?.click()}
+              />
+              <FeatureCard
+                icon="📝"
+                title="Nota"
+                subtitle="Veloce"
+                onClick={() => selectedCatId ? setShowQuickNoteModal(true) : setShowProfileModal(true)}
+              />
+              <FeatureCard
+                icon="🗓️"
+                title="Agenda"
+                subtitle="Promemoria"
+                onClick={() => selectedCatId ? setShowReminderModal(true) : setShowProfileModal(true)}
               />
               <FeatureCard icon="🤖" title="AI" subtitle="Shenzy" />
             </div>
@@ -1069,14 +1497,261 @@ export default function CatAnalyzer() {
       {/* Cat Profile Modal */}
       <CatProfileModal
         isOpen={showProfileModal}
-        onClose={() => { 
-          setShowProfileModal(false); 
-          setEditingCat(null); 
+        onClose={() => {
+          setShowProfileModal(false);
+          setEditingCat(null);
         }}
         onSave={handleSaveProfile}
         editCat={editingCat}
       />
 
+      {/* Quick Note Modal */}
+      {showQuickNoteModal && (
+        <div
+          className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShowQuickNoteModal(false);
+              setQuickNote('');
+            }
+          }}
+        >
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+          <div
+            className="relative card-elevated p-6 w-full max-w-md animate-scaleIn"
+            style={{ zIndex: 10000 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {quickNoteSaved ? (
+              <div className="text-center py-8">
+                <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-[var(--success-light)] flex items-center justify-center">
+                  <span className="text-3xl">✓</span>
+                </div>
+                <h3 className="text-heading text-[var(--text-primary)]">Nota salvata!</h3>
+              </div>
+            ) : (
+              <>
+                <h2 className="text-heading text-[var(--text-primary)] mb-2">
+                  📝 Nota veloce
+                </h2>
+                <p className="text-sm text-[var(--text-tertiary)] mb-4">
+                  Aggiungi una nota rapida per {selectedCat?.name || 'il tuo gatto'}
+                </p>
+
+                {/* Quick templates */}
+                <div className="flex flex-wrap gap-2 mb-4">
+                  {QUICK_NOTE_TEMPLATES.map((template) => (
+                    <button
+                      key={template.label}
+                      type="button"
+                      onClick={() => setQuickNote(template.label)}
+                      className={`tag text-xs transition-all hover:tag-accent ${quickNote === template.label ? 'tag-accent' : ''}`}
+                    >
+                      {template.emoji} {template.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Custom note input */}
+                <textarea
+                  value={quickNote}
+                  onChange={(e) => setQuickNote(e.target.value)}
+                  placeholder="Oppure scrivi una nota personalizzata..."
+                  rows={3}
+                  className="input-premium resize-none mb-4"
+                  autoFocus
+                />
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => {
+                      setShowQuickNoteModal(false);
+                      setQuickNote('');
+                    }}
+                    className="btn-secondary flex-1"
+                    type="button"
+                  >
+                    Annulla
+                  </button>
+                  <button
+                    onClick={() => handleSaveQuickNote(quickNote)}
+                    disabled={!quickNote.trim()}
+                    className="btn-primary flex-1"
+                    type="button"
+                  >
+                    💾 Salva
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Reminder Modal */}
+      {showReminderModal && (
+        <div
+          className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShowReminderModal(false);
+            }
+          }}
+        >
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+          <div
+            className="relative card-elevated p-6 w-full max-w-md animate-scaleIn overflow-y-auto max-h-[90vh]"
+            style={{ zIndex: 10000 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-heading text-[var(--text-primary)] mb-2">
+              🗓️ Nuovo Promemoria
+            </h2>
+            <p className="text-sm text-[var(--text-tertiary)] mb-4">
+              Aggiungi un promemoria per {selectedCat?.name || 'il tuo gatto'}
+            </p>
+
+            {/* Reminder Type Selection */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
+                Tipo
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {REMINDER_TYPES.map((type) => (
+                  <button
+                    key={type.id}
+                    type="button"
+                    onClick={() => {
+                      setNewReminderType(type.id);
+                      setNewReminderRecurring(type.defaultRecurring);
+                    }}
+                    className={`tag transition-all ${newReminderType === type.id ? 'tag-accent' : ''}`}
+                  >
+                    {type.emoji} {type.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Date Selection */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
+                Data scadenza
+              </label>
+              <input
+                type="date"
+                value={newReminderDate}
+                onChange={(e) => setNewReminderDate(e.target.value)}
+                className="input-premium"
+                min={new Date().toISOString().split('T')[0]}
+              />
+            </div>
+
+            {/* Recurring Selection */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
+                Ricorrenza
+              </label>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setNewReminderRecurring(null)}
+                  className={`tag text-xs ${newReminderRecurring === null ? 'tag-accent' : ''}`}
+                >
+                  Una volta
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setNewReminderRecurring('monthly')}
+                  className={`tag text-xs ${newReminderRecurring === 'monthly' ? 'tag-accent' : ''}`}
+                >
+                  Mensile
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setNewReminderRecurring('quarterly')}
+                  className={`tag text-xs ${newReminderRecurring === 'quarterly' ? 'tag-accent' : ''}`}
+                >
+                  Trimestrale
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setNewReminderRecurring('yearly')}
+                  className={`tag text-xs ${newReminderRecurring === 'yearly' ? 'tag-accent' : ''}`}
+                >
+                  Annuale
+                </button>
+              </div>
+            </div>
+
+            {/* Notes */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
+                Note (opzionale)
+              </label>
+              <input
+                type="text"
+                value={newReminderNotes}
+                onChange={(e) => setNewReminderNotes(e.target.value)}
+                placeholder="Es: Dott. Rossi, ore 10:00..."
+                className="input-premium"
+              />
+            </div>
+
+            {/* Existing Reminders List */}
+            {reminders.filter((r) => !r.completed).length > 0 && (
+              <div className="mb-4 pt-4 border-t border-[var(--border-subtle)]">
+                <h3 className="text-sm font-semibold text-[var(--text-primary)] mb-2">
+                  Promemoria attivi
+                </h3>
+                <div className="space-y-2 max-h-40 overflow-y-auto">
+                  {reminders
+                    .filter((r) => !r.completed)
+                    .map((r) => {
+                      const type = REMINDER_TYPES.find((t) => t.id === r.type);
+                      return (
+                        <div key={r.id} className="flex items-center justify-between gap-2 p-2 bg-[var(--bg-secondary)] rounded-lg">
+                          <div className="flex items-center gap-2 text-sm">
+                            <span>{type?.emoji || '📌'}</span>
+                            <span className="text-[var(--text-primary)]">{r.title}</span>
+                            <span className="text-xs text-[var(--text-muted)]">
+                              {new Date(r.dueDate).toLocaleDateString('it-IT')}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteReminder(r.id)}
+                            className="text-[var(--error)] text-sm hover:underline"
+                          >
+                            🗑️
+                          </button>
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowReminderModal(false)}
+                className="btn-secondary flex-1"
+                type="button"
+              >
+                Chiudi
+              </button>
+              <button
+                onClick={handleAddReminder}
+                disabled={!newReminderDate}
+                className="btn-primary flex-1"
+                type="button"
+              >
+                ➕ Aggiungi
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

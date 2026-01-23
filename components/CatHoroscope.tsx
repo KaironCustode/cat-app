@@ -19,6 +19,7 @@ export default function CatHoroscope() {
   const [personality, setPersonality] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [horoscope, setHoroscope] = useState<string | null>(null);
+  const [luckyNumbers, setLuckyNumbers] = useState<number[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [pawParticles, setPawParticles] = useState<PawParticle[]>([]);
 
@@ -77,6 +78,7 @@ export default function CatHoroscope() {
 
       const data = await response.json();
       setHoroscope(data.horoscope);
+      setLuckyNumbers(data.luckyNumbers || []);
     } catch (err: any) {
       setError(err.message || 'Errore nella generazione dell\'oroscopo');
     } finally {
@@ -294,6 +296,7 @@ export default function CatHoroscope() {
                 <button
                   onClick={() => {
                     setHoroscope(null);
+                    setLuckyNumbers([]);
                     setGuardianName('');
                     setCatName('');
                     setBirthMonth('');
@@ -308,7 +311,7 @@ export default function CatHoroscope() {
               </div>
 
               <div className="card-soft p-6 md:p-8">
-                <div 
+                <div
                   className="text-[var(--text-secondary)] leading-relaxed prose prose-sm max-w-none"
                   style={{ lineHeight: '1.8' }}
                   dangerouslySetInnerHTML={{
@@ -319,6 +322,30 @@ export default function CatHoroscope() {
                   }}
                 />
               </div>
+
+              {/* Lucky Numbers */}
+              {luckyNumbers.length > 0 && (
+                <div className="mt-8 pt-6 border-t border-[var(--border-light)]">
+                  <div className="text-center">
+                    <p className="text-[var(--text-tertiary)] text-sm mb-3">
+                      🍀 Numeri fortunati di {catName}
+                    </p>
+                    <div className="flex items-center justify-center gap-4">
+                      {luckyNumbers.map((num, idx) => (
+                        <div
+                          key={idx}
+                          className="w-14 h-14 rounded-full bg-gradient-to-br from-[var(--accent-primary)] to-[var(--accent-secondary)] flex items-center justify-center shadow-lg"
+                        >
+                          <span className="text-white font-bold text-xl">{num}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-[var(--text-tertiary)] text-xs mt-3 italic">
+                      Che le stelle siano con voi! ✨
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}

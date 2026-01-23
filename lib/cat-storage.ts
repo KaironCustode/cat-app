@@ -1,6 +1,21 @@
 // Cat Profile & Diary Storage System
 // Manages cat profiles, analysis history, and comparisons
 
+export interface HomeContext {
+  living: 'indoor' | 'outdoor' | 'mixed' | '';
+  otherAnimals: 'alone' | 'other-cats' | 'dogs' | 'other-cats-dogs' | 'other' | '';
+  family: 'single' | 'couple' | 'family' | 'family-kids' | '';
+}
+
+export interface BaselineEntry {
+  id: string;
+  imageUrl: string; // base64 thumbnail
+  analysis: string;
+  mood: string;
+  date: string;
+  context: string; // "rilassato", "gioco", "dopo mangiato", etc.
+}
+
 export interface CatProfile {
   id: string;
   name: string;
@@ -9,6 +24,10 @@ export interface CatProfile {
   adoptionDate?: string; // ISO date
   photoUrl?: string; // base64 or blob URL
   createdAt: string;
+  // New fields
+  homeContext?: HomeContext;
+  baseline?: BaselineEntry[]; // 3-5 reference analyses
+  baselineComplete?: boolean;
 }
 
 export interface DiaryEntry {
@@ -57,6 +76,40 @@ export const CAT_COLORS = [
   '#EC4899', // pink
   '#F97316', // orange
   '#6366F1', // indigo
+];
+
+// Home context labels
+export const HOME_CONTEXT_LABELS = {
+  living: {
+    '': 'Non specificato',
+    indoor: 'Solo indoor',
+    outdoor: 'Solo outdoor',
+    mixed: 'Indoor + Outdoor',
+  },
+  otherAnimals: {
+    '': 'Non specificato',
+    alone: 'Vive solo',
+    'other-cats': 'Con altri gatti',
+    dogs: 'Con cani',
+    'other-cats-dogs': 'Con gatti e cani',
+    other: 'Altri animali',
+  },
+  family: {
+    '': 'Non specificato',
+    single: 'Persona singola',
+    couple: 'Coppia',
+    family: 'Famiglia',
+    'family-kids': 'Famiglia con bambini',
+  },
+};
+
+// Baseline context options
+export const BASELINE_CONTEXTS = [
+  { id: 'relaxed', label: 'Rilassato / A riposo' },
+  { id: 'playing', label: 'Durante il gioco' },
+  { id: 'after-food', label: 'Dopo mangiato' },
+  { id: 'alert', label: 'Attento / In allerta' },
+  { id: 'grooming', label: 'Durante la pulizia' },
 ];
 
 // ============ CAT PROFILES ============
@@ -374,4 +427,83 @@ export function updateSettings(updates: Partial<AppSettings>): AppSettings {
   const newSettings = { ...current, ...updates };
   localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(newSettings));
   return newSettings;
+}
+
+// ============ BASELINE ============
+
+export function addBaselineEntry(
+  catId: string,
+  entry: Omit<BaselineEntry, 'id' | 'date'>
+): BaselineEntry | null {
+  const cat = getCat(catId);
+  if (!cat) return null;
+
+  const newEntry: BaselineEntry = {
+    ...entry,
+    id: `baseline_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    date: new Date().toISOString(),
+  };
+
+  const baseline = cat.baseline || [];
+  baseline.push(newEntry);
+
+  // Mark as complete if we have 3+ entries
+  const baselineComplete = baseline.length >= 3;
+
+  updateCat(catId, { baseline, baselineComplete });
+  return newEntry;
+}
+
+export function removeBaselineEntry(catId: string, entryId: string): boolean {
+  const cat = getCat(catId);
+  if (!cat || !cat.baseline) return false;
+
+  const filtered = cat.baseline.filter((e) => e.id !== entryId);
+  if (filtered.length === cat.baseline.length) return false;
+
+  updateCat(catId, {
+    baseline: filtered,
+    baselineComplete: filtered.length >= 3,
+  });
+  return true;
+}
+
+export function getBaselineSummary(catId: string): string | null {
+  const cat = getCat(catId);
+  if (!cat || !cat.baseline || cat.baseline.length === 0) return null;
+
+  const moods = cat.baseline.map((e) => e.mood);
+  const moodCounts: Record<string, number> = {};
+  moods.forEach((m) => {
+    moodCounts[m] = (moodCounts[m] || 0) + 1;
+  });
+
+  const dominantMood = Object.entries(moodCounts).sort((a, b) => b[1] - a[1])[0]?.[0];
+  const contexts = cat.baseline.map((e) => e.context).join(', ');
+
+  return `Baseline di ${cat.name}: mood prevalente "${getMoodLabel(dominantMood || 'neutral')}" basato su ${cat.baseline.length} osservazioni (${contexts})`;
+}
+
+export function compareToBaseline(catId: string, currentMood: string): string | null {
+  const cat = getCat(catId);
+  if (!cat || !cat.baseline || cat.baseline.length < 2) return null;
+
+  const baselineMoods = cat.baseline.map((e) => e.mood);
+  const isTypical = baselineMoods.includes(currentMood);
+
+  if (isTypical) {
+    return `Questo comportamento rientra nella baseline di ${cat.name} - è il suo modo di essere.`;
+  }
+
+  // Check if current mood is concerning compared to baseline
+  const positiveBaseline = baselineMoods.every(
+    (m) => m === 'happy' || m === 'relaxed' || m === 'neutral'
+  );
+  const currentNegative = currentMood === 'anxious' || currentMood === 'aggressive';
+
+  if (positiveBaseline && currentNegative) {
+    return `⚠️ Attenzione: questo comportamento è diverso dalla baseline di ${cat.name}. Di solito è più sereno. Vale la pena osservare.`;
+  }
+
+  return `Comportamento leggermente diverso dalla baseline di ${cat.name}, ma niente di preoccupante.`;
 }

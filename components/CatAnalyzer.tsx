@@ -13,9 +13,14 @@ import {
   detectMood,
   generateSignalsToWatch,
   compareToPreviousAnalyses,
+  compareToBaseline,
   getMoodEmoji,
+  addBaselineEntry,
   CatProfile,
+  HomeContext,
   CAT_COLORS,
+  HOME_CONTEXT_LABELS,
+  BASELINE_CONTEXTS,
 } from '@/lib/cat-storage';
 
 interface AnalysisResult {
@@ -83,7 +88,7 @@ const FeatureCard = ({ icon, title, subtitle, onClick }: { icon: string; title: 
   </div>
 );
 
-// Cat Profile Modal
+// Cat Profile Modal with Home Context
 const CatProfileModal = ({
   isOpen,
   onClose,
@@ -92,32 +97,43 @@ const CatProfileModal = ({
 }: {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (name: string, color: string) => void;
+  onSave: (name: string, color: string, homeContext?: HomeContext) => void;
   editCat?: CatProfile | null;
 }) => {
   const [name, setName] = useState(editCat?.name || '');
   const [color, setColor] = useState(editCat?.color || CAT_COLORS[0]);
+  const [homeContext, setHomeContext] = useState<HomeContext>({
+    living: editCat?.homeContext?.living || '',
+    otherAnimals: editCat?.homeContext?.otherAnimals || '',
+    family: editCat?.homeContext?.family || '',
+  });
 
   useEffect(() => {
     if (editCat) {
       setName(editCat.name);
       setColor(editCat.color);
+      setHomeContext({
+        living: editCat.homeContext?.living || '',
+        otherAnimals: editCat.homeContext?.otherAnimals || '',
+        family: editCat.homeContext?.family || '',
+      });
     } else {
       setName('');
       setColor(CAT_COLORS[0]);
+      setHomeContext({ living: '', otherAnimals: '', family: '' });
     }
   }, [editCat, isOpen]);
 
   if (!isOpen) return null;
 
   return (
-    <div 
-      className="fixed inset-0 z-[9999] flex items-center justify-center p-4" 
-      style={{ 
-        position: 'fixed', 
-        top: 0, 
-        left: 0, 
-        right: 0, 
+    <div
+      className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
         bottom: 0,
         zIndex: 9999
       }}
@@ -128,10 +144,10 @@ const CatProfileModal = ({
       }}
     >
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" style={{ zIndex: 9999 }} />
-      <div 
-        className="relative card-elevated p-6 w-full max-w-sm animate-scaleIn" 
-        style={{ 
-          position: 'relative', 
+      <div
+        className="relative card-elevated p-6 w-full max-w-md animate-scaleIn overflow-y-auto max-h-[90vh]"
+        style={{
+          position: 'relative',
           zIndex: 10000,
           backgroundColor: 'var(--bg-card)'
         }}
@@ -143,7 +159,8 @@ const CatProfileModal = ({
           {editCat ? 'Modifica profilo' : 'Nuovo gatto'}
         </h2>
 
-        <div className="space-y-4">
+        <div className="space-y-5">
+          {/* Name */}
           <div>
             <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
               Come si chiama il tuo gatto?
@@ -158,6 +175,7 @@ const CatProfileModal = ({
             />
           </div>
 
+          {/* Color */}
           <div>
             <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
               Colore del profilo
@@ -167,27 +185,94 @@ const CatProfileModal = ({
                 <button
                   key={c}
                   onClick={() => setColor(c)}
-                  className={`w-10 h-10 rounded-xl transition-all ${color === c ? 'ring-2 ring-offset-2 ring-[var(--accent-primary)] scale-110' : 'hover:scale-105'}`}
+                  className={`w-8 h-8 rounded-lg transition-all ${color === c ? 'ring-2 ring-offset-2 ring-[var(--accent-primary)] scale-110' : 'hover:scale-105'}`}
                   style={{ backgroundColor: c }}
+                  type="button"
                 />
               ))}
+            </div>
+          </div>
+
+          {/* Home Context Section */}
+          <div className="pt-4 border-t border-[var(--border-subtle)]">
+            <h3 className="text-sm font-semibold text-[var(--text-primary)] mb-3 flex items-center gap-2">
+              <span>🏠</span> Contesto casa
+              <span className="text-xs font-normal text-[var(--text-tertiary)]">(opzionale)</span>
+            </h3>
+
+            {/* Living situation */}
+            <div className="mb-3">
+              <label className="block text-xs text-[var(--text-tertiary)] mb-1.5">
+                Dove vive?
+              </label>
+              <div className="flex gap-2 flex-wrap">
+                {(['indoor', 'outdoor', 'mixed'] as const).map((opt) => (
+                  <button
+                    key={opt}
+                    type="button"
+                    onClick={() => setHomeContext(prev => ({ ...prev, living: prev.living === opt ? '' : opt }))}
+                    className={`tag text-xs ${homeContext.living === opt ? 'tag-accent' : ''}`}
+                  >
+                    {HOME_CONTEXT_LABELS.living[opt]}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Other animals */}
+            <div className="mb-3">
+              <label className="block text-xs text-[var(--text-tertiary)] mb-1.5">
+                Altri animali?
+              </label>
+              <div className="flex gap-2 flex-wrap">
+                {(['alone', 'other-cats', 'dogs', 'other-cats-dogs'] as const).map((opt) => (
+                  <button
+                    key={opt}
+                    type="button"
+                    onClick={() => setHomeContext(prev => ({ ...prev, otherAnimals: prev.otherAnimals === opt ? '' : opt }))}
+                    className={`tag text-xs ${homeContext.otherAnimals === opt ? 'tag-accent' : ''}`}
+                  >
+                    {HOME_CONTEXT_LABELS.otherAnimals[opt]}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Family */}
+            <div>
+              <label className="block text-xs text-[var(--text-tertiary)] mb-1.5">
+                Tipo di famiglia?
+              </label>
+              <div className="flex gap-2 flex-wrap">
+                {(['single', 'couple', 'family', 'family-kids'] as const).map((opt) => (
+                  <button
+                    key={opt}
+                    type="button"
+                    onClick={() => setHomeContext(prev => ({ ...prev, family: prev.family === opt ? '' : opt }))}
+                    className={`tag text-xs ${homeContext.family === opt ? 'tag-accent' : ''}`}
+                  >
+                    {HOME_CONTEXT_LABELS.family[opt]}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         </div>
 
         <div className="flex gap-3 mt-6">
-          <button onClick={onClose} className="btn-secondary flex-1">
+          <button onClick={onClose} className="btn-secondary flex-1" type="button">
             Annulla
           </button>
           <button
             onClick={() => {
               if (name.trim()) {
-                onSave(name.trim(), color);
+                onSave(name.trim(), color, homeContext);
                 onClose();
               }
             }}
             disabled={!name.trim()}
             className="btn-primary flex-1"
+            type="button"
           >
             {editCat ? 'Salva' : 'Crea'}
           </button>
@@ -217,6 +302,8 @@ export default function CatAnalyzer() {
   const [isDragging, setIsDragging] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [editingCat, setEditingCat] = useState<CatProfile | null>(null);
+  const [baselineComparison, setBaselineComparison] = useState<string | null>(null);
+  const [showBaselinePrompt, setShowBaselinePrompt] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Load cats on mount
@@ -252,6 +339,16 @@ export default function CatAnalyzer() {
 
       const comp = compareToPreviousAnalyses(selectedCatId, mood);
       setComparison(comp);
+
+      // Compare to baseline if available
+      const baselineComp = compareToBaseline(selectedCatId, mood);
+      setBaselineComparison(baselineComp);
+
+      // Show baseline prompt if cat doesn't have a complete baseline
+      const cat = getCats().find(c => c.id === selectedCatId);
+      if (cat && !cat.baselineComplete) {
+        setShowBaselinePrompt(true);
+      }
     }
   }, [result, selectedCatId]);
 
@@ -371,6 +468,18 @@ export default function CatAnalyzer() {
       frames.forEach((frame) => formData.append('images', frame));
       formData.append('isVideo', 'true');
 
+      // Add cat context
+      if (selectedCat) {
+        formData.append('catName', selectedCat.name);
+        if (selectedCat.homeContext) {
+          formData.append('homeContext', JSON.stringify({
+            living: HOME_CONTEXT_LABELS.living[selectedCat.homeContext.living] || '',
+            otherAnimals: HOME_CONTEXT_LABELS.otherAnimals[selectedCat.homeContext.otherAnimals] || '',
+            family: HOME_CONTEXT_LABELS.family[selectedCat.homeContext.family] || '',
+          }));
+        }
+      }
+
       setProgress(80);
       const response = await fetch('/api/cat-analysis', {
         method: 'POST',
@@ -399,6 +508,18 @@ export default function CatAnalyzer() {
       const formData = new FormData();
       formData.append('images', imageFile);
       formData.append('isVideo', 'false');
+
+      // Add cat context
+      if (selectedCat) {
+        formData.append('catName', selectedCat.name);
+        if (selectedCat.homeContext) {
+          formData.append('homeContext', JSON.stringify({
+            living: HOME_CONTEXT_LABELS.living[selectedCat.homeContext.living] || '',
+            otherAnimals: HOME_CONTEXT_LABELS.otherAnimals[selectedCat.homeContext.otherAnimals] || '',
+            family: HOME_CONTEXT_LABELS.family[selectedCat.homeContext.family] || '',
+          }));
+        }
+      }
 
       setProgress(50);
       const response = await fetch('/api/cat-analysis', {
@@ -457,16 +578,16 @@ export default function CatAnalyzer() {
     }
   };
 
-  const handleSaveProfile = (name: string, color: string) => {
+  const handleSaveProfile = (name: string, color: string, homeContext?: HomeContext) => {
     if (editingCat) {
       // Update existing cat
-      const updated = updateCat(editingCat.id, { name, color });
+      const updated = updateCat(editingCat.id, { name, color, homeContext });
       if (updated) {
         setCats(cats.map(c => c.id === editingCat.id ? updated : c));
       }
     } else {
       // Create new cat
-      const newCat = saveCat({ name, color });
+      const newCat = saveCat({ name, color, homeContext });
       setCats([...cats, newCat]);
       setSelectedCatId(newCat.id);
       setActiveCat(newCat.id);
@@ -479,7 +600,7 @@ export default function CatAnalyzer() {
     setError(null);
     setPreview(null);
     setPreviewType(null);
-    setAskCount(0); // Reset question counter
+    setAskCount(0);
     setAskAnswer(null);
     setAskQuestion('');
     setProgress(0);
@@ -487,8 +608,8 @@ export default function CatAnalyzer() {
     setComparison(null);
     setSignals([]);
     setDetectedMood('neutral');
-    setAskQuestion('');
-    setAskAnswer(null);
+    setBaselineComparison(null);
+    setShowBaselinePrompt(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -739,7 +860,20 @@ export default function CatAnalyzer() {
                 </div>
               </div>
 
-              {/* Comparison */}
+              {/* Baseline Comparison */}
+              {baselineComparison && (
+                <div className={`card-accent p-4 mb-4 ${baselineComparison.includes('⚠️') ? 'border-l-4 border-amber-500' : ''}`}>
+                  <div className="flex items-start gap-3">
+                    <span className="text-xl">{baselineComparison.includes('⚠️') ? '⚠️' : '🎯'}</span>
+                    <div>
+                      <h4 className="font-semibold text-[var(--text-primary)] text-sm mb-1">Rispetto alla baseline</h4>
+                      <p className="text-sm text-[var(--text-secondary)]">{baselineComparison.replace('⚠️ ', '')}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Time Comparison */}
               {comparison && comparison.trend !== 'unknown' && (
                 <div className="card-accent p-4 mb-4">
                   <div className="flex items-start gap-3">
@@ -747,6 +881,55 @@ export default function CatAnalyzer() {
                     <div>
                       <h4 className="font-semibold text-[var(--text-primary)] text-sm mb-1">Confronto nel tempo</h4>
                       <p className="text-sm text-[var(--text-secondary)]">{comparison.summary}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Baseline Prompt */}
+              {showBaselinePrompt && selectedCat && !selectedCat.baselineComplete && (
+                <div className="card-soft p-4 mb-4 border border-dashed border-[var(--accent-primary)]">
+                  <div className="flex items-start gap-3">
+                    <span className="text-xl">🎯</span>
+                    <div className="flex-1">
+                      <h4 className="font-semibold text-[var(--text-primary)] text-sm mb-1">
+                        Costruisci la baseline di {selectedCat.name}
+                      </h4>
+                      <p className="text-xs text-[var(--text-tertiary)] mb-3">
+                        Salva 3-5 analisi in momenti diversi per creare un profilo comportamentale di riferimento.
+                        Così Shenzy potrà dirti quando qualcosa è &quot;diverso dal solito&quot;.
+                      </p>
+                      <div className="flex gap-2 flex-wrap">
+                        {BASELINE_CONTEXTS.map((ctx) => (
+                          <button
+                            key={ctx.id}
+                            type="button"
+                            onClick={() => {
+                              if (result && preview) {
+                                addBaselineEntry(selectedCat.id, {
+                                  imageUrl: preview,
+                                  analysis: result.analysis,
+                                  mood: detectedMood,
+                                  context: ctx.label,
+                                });
+                                // Refresh cats to get updated baseline status
+                                setCats(getCats());
+                                setShowBaselinePrompt(false);
+                              }
+                            }}
+                            className="tag text-xs hover:tag-accent transition-all"
+                          >
+                            + {ctx.label}
+                          </button>
+                        ))}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setShowBaselinePrompt(false)}
+                        className="text-xs text-[var(--text-muted)] mt-2 hover:underline"
+                      >
+                        Non ora
+                      </button>
                     </div>
                   </div>
                 </div>

@@ -79,10 +79,11 @@ const LoadingIndicator = () => {
   );
 };
 
-// Feature card component
+// Feature card component - using button for proper mobile touch support
 const FeatureCard = ({ icon, title, subtitle, onClick }: { icon: string; title: string; subtitle: string; onClick?: () => void }) => (
-  <div
-    className="card-premium p-6 text-center hover:shadow-lg transition-all duration-300 group cursor-pointer"
+  <button
+    type="button"
+    className="card-premium p-6 text-center hover:shadow-lg transition-all duration-300 group cursor-pointer w-full border-none"
     onClick={onClick}
   >
     <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-[var(--accent-light)] flex items-center justify-center text-2xl group-hover:scale-110 transition-transform">
@@ -90,7 +91,7 @@ const FeatureCard = ({ icon, title, subtitle, onClick }: { icon: string; title: 
     </div>
     <h3 className="font-semibold text-[var(--text-primary)] mb-1">{title}</h3>
     <p className="text-sm text-[var(--text-tertiary)]">{subtitle}</p>
-  </div>
+  </button>
 );
 
 // Cat Profile Modal with Home Context

@@ -262,7 +262,7 @@ const CatProfileModal = ({
                 <button
                   key={c}
                   onClick={() => setColor(c)}
-                  className={`w-12 h-12 rounded-xl transition-all ${color === c ? 'ring-3 ring-offset-2 ring-[var(--accent-primary)] scale-110' : 'hover:scale-105'}`}
+                  className={`w-24 h-24 rounded-2xl transition-all ${color === c ? 'ring-4 ring-offset-2 ring-[var(--accent-primary)] scale-110' : 'hover:scale-105'}`}
                   style={{ backgroundColor: c }}
                   type="button"
                 />
@@ -464,6 +464,7 @@ export default function CatAnalyzer() {
   const [newReminderDate, setNewReminderDate] = useState('');
   const [newReminderNotes, setNewReminderNotes] = useState('');
   const [newReminderRecurring, setNewReminderRecurring] = useState<'monthly' | 'quarterly' | 'yearly' | null>(null);
+  const [calendarMonth, setCalendarMonth] = useState(() => new Date());
   const [showChatModal, setShowChatModal] = useState(false);
   const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'assistant'; content: string }[]>([]);
   const [chatInput, setChatInput] = useState('');
@@ -515,6 +516,7 @@ export default function CatAnalyzer() {
       setReminders(getReminders(selectedCatId));
       setUpcomingReminders(getUpcomingReminders(selectedCatId, 7));
       setOverdueReminders(getOverdueReminders(selectedCatId));
+      setCalendarMonth(new Date());
     } else {
       setReminders([]);
       setUpcomingReminders([]);
@@ -886,10 +888,11 @@ export default function CatAnalyzer() {
   };
 
   const handleSaveQuickNote = (noteText: string) => {
-    if (!noteText.trim() || !quickNoteCatId) return;
+    const targetCatId = selectedCatId || quickNoteCatId || cats[0]?.id || null;
+    if (!noteText.trim() || !targetCatId) return;
 
     addDiaryEntry({
-      catId: quickNoteCatId,
+      catId: targetCatId,
       type: 'note',
       note: noteText.trim(),
     });
@@ -899,7 +902,6 @@ export default function CatAnalyzer() {
     setTimeout(() => {
       setShowQuickNoteModal(false);
       setQuickNoteSaved(false);
-      setQuickNoteCatId(null);
     }, 1500);
   };
 
@@ -1013,15 +1015,18 @@ export default function CatAnalyzer() {
       // Update existing cat
       const updated = updateCat(editingCat.id, { name, color, homeContext, photoUrl });
       if (updated) {
-        setCats(cats.map(c => c.id === editingCat.id ? updated : c));
+        setCats(prev => prev.map(c => c.id === editingCat.id ? updated : c));
+        setSelectedCatId(updated.id);
+        setActiveCat(updated.id);
       }
     } else {
       // Create new cat
       const newCat = saveCat({ name, color, homeContext, photoUrl });
-      setCats([...cats, newCat]);
+      setCats(prev => [...prev, newCat]);
       setSelectedCatId(newCat.id);
       setActiveCat(newCat.id);
     }
+    setShowProfileModal(false);
     setEditingCat(null);
   };
 
@@ -1275,6 +1280,10 @@ export default function CatAnalyzer() {
 
                   // Default to the currently selected cat (or first one) so it doesn't feel like "nothing happens"
                   const defaultCatId = selectedCatId || cats[0]?.id || null;
+                  if (!selectedCatId && defaultCatId) {
+                    setSelectedCatId(defaultCatId);
+                    setActiveCat(defaultCatId);
+                  }
                   setQuickNoteCatId(defaultCatId);
                   setQuickNoteSaved(false);
                   setQuickNote('');
@@ -1285,7 +1294,19 @@ export default function CatAnalyzer() {
                 icon="🗓️"
                 title="Agenda"
                 subtitle="Promemoria"
-                onClick={() => selectedCatId ? setShowReminderModal(true) : setShowProfileModal(true)}
+                onClick={() => {
+                  if (cats.length === 0) {
+                    setEditingCat(null);
+                    setShowProfileModal(true);
+                    return;
+                  }
+                  const defaultCatId = selectedCatId || cats[0]?.id || null;
+                  if (defaultCatId && !selectedCatId) {
+                    setSelectedCatId(defaultCatId);
+                    setActiveCat(defaultCatId);
+                  }
+                  if (defaultCatId) setShowReminderModal(true);
+                }}
               />
               <FeatureCard
                 icon="🤖"
@@ -1297,6 +1318,11 @@ export default function CatAnalyzer() {
                     setEditingCat(null);
                     setShowProfileModal(true);
                     return;
+                  }
+                  const defaultCatId = selectedCatId || cats[0]?.id || null;
+                  if (defaultCatId && !selectedCatId) {
+                    setSelectedCatId(defaultCatId);
+                    setActiveCat(defaultCatId);
                   }
                   setShowChatModal(true);
                 }}
@@ -1626,7 +1652,6 @@ export default function CatAnalyzer() {
             if (e.target === e.currentTarget) {
               setShowQuickNoteModal(false);
               setQuickNote('');
-              setQuickNoteCatId(null);
             }
           }}
         >
@@ -1663,54 +1688,37 @@ export default function CatAnalyzer() {
                   ➕ Crea profilo
                 </button>
               </div>
-            ) : !quickNoteCatId ? (
-              <>
-                <h2 className="text-heading text-[var(--text-primary)] mb-2">
-                  📝 Nota
-                </h2>
-                <p className="text-sm text-[var(--text-tertiary)] mb-4">
-                  Per quale gatto vuoi aggiungere una nota?
-                </p>
-                <div className="space-y-2">
-                  {cats.map((cat) => (
-                    <button
-                      key={cat.id}
-                      onClick={() => setQuickNoteCatId(cat.id)}
-                      className="w-full p-3 rounded-xl bg-[var(--bg-secondary)] hover:bg-[var(--bg-tertiary)] transition-colors flex items-center gap-3"
-                      type="button"
-                    >
-                      <div
-                        className="w-10 h-10 rounded-xl flex items-center justify-center overflow-hidden"
-                        style={{ backgroundColor: cat.color }}
-                      >
-                        {cat.photoUrl ? (
-                          <img src={cat.photoUrl} alt={cat.name} className="w-full h-full object-cover" />
-                        ) : (
-                          <span className="text-xl">🐱</span>
-                        )}
-                      </div>
-                      <span className="font-medium text-[var(--text-primary)]">{cat.name}</span>
-                    </button>
-                  ))}
-                </div>
-                <button
-                  onClick={() => {
-                    setShowQuickNoteModal(false);
-                  }}
-                  className="btn-secondary w-full mt-4"
-                  type="button"
-                >
-                  Annulla
-                </button>
-              </>
             ) : (
               <>
                 <h2 className="text-heading text-[var(--text-primary)] mb-2">
-                  📝 Nota per {cats.find(c => c.id === quickNoteCatId)?.name}
+                  📝 Nota per {cats.find(c => c.id === (selectedCatId || quickNoteCatId))?.name || 'il tuo gatto'}
                 </h2>
                 <p className="text-sm text-[var(--text-tertiary)] mb-4">
                   Scrivi liberamente o usa un template
                 </p>
+
+                {/* If multiple cats, allow quick switching (default is the selected one) */}
+                {cats.length > 1 && (
+                  <div className="flex flex-wrap gap-2 mb-4">
+                    {cats.map((cat) => {
+                      const isActive = (selectedCatId || quickNoteCatId) === cat.id;
+                      return (
+                        <button
+                          key={cat.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedCatId(cat.id);
+                            setActiveCat(cat.id);
+                            setQuickNoteCatId(cat.id);
+                          }}
+                          className={`tag text-xs transition-all ${isActive ? 'tag-accent' : ''}`}
+                        >
+                          <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: cat.color }} /> {cat.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
 
                 {/* Quick templates */}
                 <div className="flex flex-wrap gap-2 mb-4">
@@ -1739,13 +1747,12 @@ export default function CatAnalyzer() {
                 <div className="flex gap-3">
                   <button
                     onClick={() => {
-                      setQuickNoteCatId(null);
                       setQuickNote('');
                     }}
                     className="btn-secondary flex-1"
                     type="button"
                   >
-                    Indietro
+                    Pulisci
                   </button>
                   <button
                     onClick={() => handleSaveQuickNote(quickNote)}
@@ -1784,6 +1791,107 @@ export default function CatAnalyzer() {
             <p className="text-sm text-[var(--text-tertiary)] mb-4">
               Aggiungi un promemoria per {selectedCat?.name || 'il tuo gatto'}
             </p>
+
+            {/* Mini calendario (minimo indispensabile) */}
+            {selectedCatId && (
+              <div className="card-soft p-4 mb-4">
+                <div className="flex items-center justify-between mb-3">
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={() => setCalendarMonth((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))}
+                  >
+                    ←
+                  </button>
+                  <div className="text-sm font-semibold text-[var(--text-primary)]">
+                    {calendarMonth.toLocaleDateString('it-IT', { month: 'long', year: 'numeric' })}
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={() => setCalendarMonth((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1))}
+                  >
+                    →
+                  </button>
+                </div>
+
+                {(() => {
+                  const ymd = (dt: Date) => {
+                    const y = dt.getFullYear();
+                    const m = String(dt.getMonth() + 1).padStart(2, '0');
+                    const da = String(dt.getDate()).padStart(2, '0');
+                    return `${y}-${m}-${da}`;
+                  };
+
+                  const monthStart = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), 1);
+                  const monthEnd = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 0);
+                  const daysInMonth = monthEnd.getDate();
+                  const mondayIndex = (monthStart.getDay() + 6) % 7; // Monday=0
+
+                  const byDay = new Map<string, Reminder[]>();
+                  reminders.forEach((r) => {
+                    const dayKey = ymd(new Date(r.dueDate));
+                    byDay.set(dayKey, [...(byDay.get(dayKey) || []), r]);
+                  });
+
+                  const todayKey = ymd(new Date());
+
+                  const cells: Array<{ key: string; label: string; inMonth: boolean }> = [];
+                  for (let i = 0; i < mondayIndex; i++) cells.push({ key: `pad-${i}`, label: '', inMonth: false });
+                  for (let d = 1; d <= daysInMonth; d++) {
+                    const dt = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), d);
+                    cells.push({ key: ymd(dt), label: String(d), inMonth: true });
+                  }
+                  while (cells.length % 7 !== 0) cells.push({ key: `pad-end-${cells.length}`, label: '', inMonth: false });
+
+                  const weekDays = ['L', 'M', 'M', 'G', 'V', 'S', 'D'];
+
+                  return (
+                    <div className="select-none">
+                      <div className="grid grid-cols-7 gap-1 mb-2">
+                        {weekDays.map((w, idx) => (
+                          <div key={`${w}-${idx}`} className="text-center text-xs text-[var(--text-muted)] py-1">
+                            {w}
+                          </div>
+                        ))}
+                      </div>
+                      <div className="grid grid-cols-7 gap-1">
+                        {cells.map((c) => {
+                          if (!c.inMonth) return <div key={c.key} className="h-10" />;
+
+                          const dayReminders = byDay.get(c.key) || [];
+                          const hasPending = dayReminders.some((r) => !r.completed);
+                          const isOverdue = dayReminders.some((r) => !r.completed && new Date(r.dueDate).getTime() < Date.now());
+                          const isSelected = newReminderDate === c.key;
+                          const isToday = c.key === todayKey;
+
+                          return (
+                            <button
+                              key={c.key}
+                              type="button"
+                              onClick={() => setNewReminderDate(c.key)}
+                              className={[
+                                'h-10 rounded-lg text-sm flex flex-col items-center justify-center transition-colors',
+                                isSelected ? 'bg-[var(--accent-light)] border border-[var(--accent-primary)]' : 'bg-[var(--bg-secondary)] hover:bg-[var(--bg-tertiary)]',
+                                isToday ? 'ring-1 ring-[var(--accent-primary)]' : '',
+                              ].join(' ')}
+                              title={dayReminders.length ? `${dayReminders.length} promemoria` : 'Nessun promemoria'}
+                            >
+                              <span className={isOverdue ? 'text-[var(--error)] font-semibold' : 'text-[var(--text-primary)]'}>
+                                {c.label}
+                              </span>
+                              {hasPending && (
+                                <span className={`w-1.5 h-1.5 rounded-full ${isOverdue ? 'bg-[var(--error)]' : 'bg-[var(--accent-primary)]'}`} />
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
 
             {/* Reminder Type Selection */}
             <div className="mb-4">

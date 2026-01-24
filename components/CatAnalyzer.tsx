@@ -9,6 +9,7 @@ import {
   setActiveCat,
   saveCat,
   updateCat,
+  deleteCat,
   addDiaryEntry,
   detectMood,
   generateSignalsToWatch,
@@ -97,11 +98,13 @@ const CatProfileModal = ({
   isOpen,
   onClose,
   onSave,
+  onDelete,
   editCat,
 }: {
   isOpen: boolean;
   onClose: () => void;
   onSave: (name: string, color: string, homeContext?: HomeContext, photoUrl?: string) => void;
+  onDelete?: () => void;
   editCat?: CatProfile | null;
 }) => {
   const [name, setName] = useState(editCat?.name || '');
@@ -387,7 +390,23 @@ const CatProfileModal = ({
           )}
         </div>
 
-        <div className="flex gap-3 mt-6">
+        {/* Delete button for existing profiles */}
+        {editCat && onDelete && (
+          <button
+            onClick={() => {
+              if (confirm(`Sei sicuro di voler eliminare il profilo di ${editCat.name}? Questa azione non può essere annullata.`)) {
+                onDelete();
+                onClose();
+              }
+            }}
+            className="w-full py-3 px-4 rounded-xl bg-red-500/10 text-red-500 hover:bg-red-500/20 transition-colors text-sm font-medium mt-6"
+            type="button"
+          >
+            🗑️ Elimina profilo di {editCat.name}
+          </button>
+        )}
+
+        <div className="flex gap-3 mt-4">
           <button onClick={onClose} className="btn-secondary flex-1" type="button">
             Annulla
           </button>
@@ -435,6 +454,7 @@ export default function CatAnalyzer() {
   const [showQuickNoteModal, setShowQuickNoteModal] = useState(false);
   const [quickNote, setQuickNote] = useState('');
   const [quickNoteSaved, setQuickNoteSaved] = useState(false);
+  const [quickNoteCatId, setQuickNoteCatId] = useState<string | null>(null);
   const [showReminderModal, setShowReminderModal] = useState(false);
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [upcomingReminders, setUpcomingReminders] = useState<Reminder[]>([]);
@@ -448,12 +468,11 @@ export default function CatAnalyzer() {
   const [chatInput, setChatInput] = useState('');
   const [isChatting, setIsChatting] = useState(false);
   const [chatCount, setChatCount] = useState(0);
-  const [showCameraModal, setShowCameraModal] = useState(false);
-  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
-  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [chatResetTime, setChatResetTime] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  const CHAT_LIMIT = 10;
+  const CHAT_RESET_HOURS = 6;
 
   // Load cats on mount
   useEffect(() => {
@@ -465,6 +484,27 @@ export default function CatAnalyzer() {
     } else if (loadedCats.length > 0) {
       setSelectedCatId(loadedCats[0].id);
       setActiveCat(loadedCats[0].id);
+    }
+
+    // Load chat rate limit from localStorage
+    const savedChatData = localStorage.getItem('shenzy_chat_limit');
+    if (savedChatData) {
+      try {
+        const { count, resetTime } = JSON.parse(savedChatData);
+        const now = Date.now();
+        if (resetTime && now < resetTime) {
+          // Still within limit period
+          setChatCount(count || 0);
+          setChatResetTime(resetTime);
+        } else {
+          // Reset period expired, clear limit
+          localStorage.removeItem('shenzy_chat_limit');
+          setChatCount(0);
+          setChatResetTime(null);
+        }
+      } catch {
+        localStorage.removeItem('shenzy_chat_limit');
+      }
     }
   }, []);
 
@@ -845,10 +885,10 @@ export default function CatAnalyzer() {
   };
 
   const handleSaveQuickNote = (noteText: string) => {
-    if (!noteText.trim() || !selectedCatId) return;
+    if (!noteText.trim() || !quickNoteCatId) return;
 
     addDiaryEntry({
-      catId: selectedCatId,
+      catId: quickNoteCatId,
       type: 'note',
       note: noteText.trim(),
     });
@@ -858,6 +898,7 @@ export default function CatAnalyzer() {
     setTimeout(() => {
       setShowQuickNoteModal(false);
       setQuickNoteSaved(false);
+      setQuickNoteCatId(null);
     }, 1500);
   };
 
@@ -907,68 +948,10 @@ export default function CatAnalyzer() {
     }
   };
 
-  // Camera handling
-  const startCamera = async () => {
-    setCameraError(null);
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
-        audio: false,
-      });
-      setCameraStream(stream);
-      setShowCameraModal(true);
-      // Wait for modal to render, then attach stream
-      setTimeout(() => {
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          videoRef.current.play();
-        }
-      }, 100);
-    } catch (err: any) {
-      console.error('Camera error:', err);
-      if (err.name === 'NotAllowedError') {
-        setCameraError('Accesso alla fotocamera negato. Controlla i permessi del browser.');
-      } else if (err.name === 'NotFoundError') {
-        setCameraError('Nessuna fotocamera trovata sul dispositivo.');
-      } else {
-        setCameraError('Impossibile accedere alla fotocamera: ' + err.message);
-      }
-    }
-  };
-
-  const stopCamera = () => {
-    if (cameraStream) {
-      cameraStream.getTracks().forEach(track => track.stop());
-      setCameraStream(null);
-    }
-    setShowCameraModal(false);
-  };
-
-  const capturePhoto = async () => {
-    if (!videoRef.current || !canvasRef.current) return;
-
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    ctx.drawImage(video, 0, 0);
-
-    canvas.toBlob(async (blob) => {
-      if (!blob) return;
-
-      const file = new File([blob], `camera-${Date.now()}.jpg`, { type: 'image/jpeg' });
-      stopCamera();
-      processFile(file);
-    }, 'image/jpeg', 0.9);
-  };
 
   // Chat handling
   const handleChat = async () => {
-    if (!chatInput.trim() || chatCount >= 5) return;
+    if (!chatInput.trim() || chatCount >= CHAT_LIMIT) return;
 
     const userMessage = chatInput.trim();
     setChatInput('');
@@ -989,7 +972,22 @@ export default function CatAnalyzer() {
 
       const data = await response.json();
       setChatMessages(prev => [...prev, { role: 'assistant', content: data.reply }]);
-      setChatCount(prev => prev + 1);
+
+      // Update chat count and save to localStorage
+      const newCount = chatCount + 1;
+      setChatCount(newCount);
+
+      // Set reset time if this is the first message
+      let resetTime = chatResetTime;
+      if (!resetTime) {
+        resetTime = Date.now() + (CHAT_RESET_HOURS * 60 * 60 * 1000);
+        setChatResetTime(resetTime);
+      }
+
+      localStorage.setItem('shenzy_chat_limit', JSON.stringify({
+        count: newCount,
+        resetTime: resetTime,
+      }));
     } catch (err: any) {
       setChatMessages(prev => [...prev, { role: 'assistant', content: 'Mi dispiace, qualcosa è andato storto. Riprova!' }]);
     } finally {
@@ -1024,6 +1022,24 @@ export default function CatAnalyzer() {
       setActiveCat(newCat.id);
     }
     setEditingCat(null);
+  };
+
+  const handleDeleteProfile = () => {
+    if (editingCat) {
+      deleteCat(editingCat.id);
+      setCats(cats.filter(c => c.id !== editingCat.id));
+      if (selectedCatId === editingCat.id) {
+        const remaining = cats.filter(c => c.id !== editingCat.id);
+        if (remaining.length > 0) {
+          setSelectedCatId(remaining[0].id);
+          setActiveCat(remaining[0].id);
+        } else {
+          setSelectedCatId(null);
+          setActiveCat(null);
+        }
+      }
+      setEditingCat(null);
+    }
   };
 
   const reset = () => {
@@ -1243,18 +1259,12 @@ export default function CatAnalyzer() {
             </p>
 
             {/* Feature Cards */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-12 stagger-children max-w-xl mx-auto">
-              <FeatureCard
-                icon="📷"
-                title="Camera"
-                subtitle="Scatta foto"
-                onClick={startCamera}
-              />
+            <div className="grid grid-cols-3 gap-4 mb-12 stagger-children max-w-md mx-auto">
               <FeatureCard
                 icon="📝"
                 title="Nota"
-                subtitle="Veloce"
-                onClick={() => selectedCatId ? setShowQuickNoteModal(true) : setShowProfileModal(true)}
+                subtitle="Appunti"
+                onClick={() => setShowQuickNoteModal(true)}
               />
               <FeatureCard
                 icon="🗓️"
@@ -1267,8 +1277,6 @@ export default function CatAnalyzer() {
                 title="AI"
                 subtitle="Chatta"
                 onClick={() => {
-                  setChatMessages([]);
-                  setChatCount(0);
                   setShowChatModal(true);
                 }}
               />
@@ -1585,6 +1593,7 @@ export default function CatAnalyzer() {
           setEditingCat(null);
         }}
         onSave={handleSaveProfile}
+        onDelete={handleDeleteProfile}
         editCat={editingCat}
       />
 
@@ -1596,6 +1605,7 @@ export default function CatAnalyzer() {
             if (e.target === e.currentTarget) {
               setShowQuickNoteModal(false);
               setQuickNote('');
+              setQuickNoteCatId(null);
             }
           }}
         >
@@ -1612,13 +1622,73 @@ export default function CatAnalyzer() {
                 </div>
                 <h3 className="text-heading text-[var(--text-primary)]">Nota salvata!</h3>
               </div>
+            ) : cats.length === 0 ? (
+              <div className="text-center py-8">
+                <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-[var(--bg-secondary)] flex items-center justify-center">
+                  <span className="text-3xl">🐱</span>
+                </div>
+                <h3 className="text-heading text-[var(--text-primary)] mb-2">Nessun profilo salvato</h3>
+                <p className="text-sm text-[var(--text-tertiary)] mb-4">
+                  Crea prima un profilo per il tuo gatto
+                </p>
+                <button
+                  onClick={() => {
+                    setShowQuickNoteModal(false);
+                    setShowProfileModal(true);
+                  }}
+                  className="btn-primary"
+                  type="button"
+                >
+                  ➕ Crea profilo
+                </button>
+              </div>
+            ) : !quickNoteCatId ? (
+              <>
+                <h2 className="text-heading text-[var(--text-primary)] mb-2">
+                  📝 Nota
+                </h2>
+                <p className="text-sm text-[var(--text-tertiary)] mb-4">
+                  Per quale gatto vuoi aggiungere una nota?
+                </p>
+                <div className="space-y-2">
+                  {cats.map((cat) => (
+                    <button
+                      key={cat.id}
+                      onClick={() => setQuickNoteCatId(cat.id)}
+                      className="w-full p-3 rounded-xl bg-[var(--bg-secondary)] hover:bg-[var(--bg-tertiary)] transition-colors flex items-center gap-3"
+                      type="button"
+                    >
+                      <div
+                        className="w-10 h-10 rounded-xl flex items-center justify-center overflow-hidden"
+                        style={{ backgroundColor: cat.color }}
+                      >
+                        {cat.photoUrl ? (
+                          <img src={cat.photoUrl} alt={cat.name} className="w-full h-full object-cover" />
+                        ) : (
+                          <span className="text-xl">🐱</span>
+                        )}
+                      </div>
+                      <span className="font-medium text-[var(--text-primary)]">{cat.name}</span>
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={() => {
+                    setShowQuickNoteModal(false);
+                  }}
+                  className="btn-secondary w-full mt-4"
+                  type="button"
+                >
+                  Annulla
+                </button>
+              </>
             ) : (
               <>
                 <h2 className="text-heading text-[var(--text-primary)] mb-2">
-                  📝 Nota veloce
+                  📝 Nota per {cats.find(c => c.id === quickNoteCatId)?.name}
                 </h2>
                 <p className="text-sm text-[var(--text-tertiary)] mb-4">
-                  Aggiungi una nota rapida per {selectedCat?.name || 'il tuo gatto'}
+                  Scrivi liberamente o usa un template
                 </p>
 
                 {/* Quick templates */}
@@ -1639,8 +1709,8 @@ export default function CatAnalyzer() {
                 <textarea
                   value={quickNote}
                   onChange={(e) => setQuickNote(e.target.value)}
-                  placeholder="Oppure scrivi una nota personalizzata..."
-                  rows={3}
+                  placeholder="Scrivi qui la tua nota..."
+                  rows={4}
                   className="input-premium resize-none mb-4"
                   autoFocus
                 />
@@ -1648,13 +1718,13 @@ export default function CatAnalyzer() {
                 <div className="flex gap-3">
                   <button
                     onClick={() => {
-                      setShowQuickNoteModal(false);
+                      setQuickNoteCatId(null);
                       setQuickNote('');
                     }}
                     className="btn-secondary flex-1"
                     type="button"
                   >
-                    Annulla
+                    Indietro
                   </button>
                   <button
                     onClick={() => handleSaveQuickNote(quickNote)}
@@ -1836,66 +1906,6 @@ export default function CatAnalyzer() {
         </div>
       )}
 
-      {/* Camera Error Toast */}
-      {cameraError && (
-        <div className="fixed bottom-4 left-4 right-4 z-[9999] animate-slideUp">
-          <div className="card-premium p-4 border-l-4 border-[var(--error)] bg-[var(--error-light)] max-w-md mx-auto">
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-sm text-[var(--text-primary)]">{cameraError}</p>
-              <button
-                onClick={() => setCameraError(null)}
-                className="text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-              >
-                ✕
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Camera Modal */}
-      {showCameraModal && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black">
-          <div className="relative w-full max-w-2xl">
-            {/* Camera View */}
-            <div className="relative rounded-2xl overflow-hidden bg-black">
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                muted
-                className="w-full h-auto max-h-[70vh] object-contain"
-              />
-
-              {/* Capture Button */}
-              <div className="absolute bottom-6 left-0 right-0 flex justify-center gap-4">
-                <button
-                  onClick={stopCamera}
-                  className="w-14 h-14 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center text-white text-2xl hover:bg-white/30 transition-colors"
-                  type="button"
-                >
-                  ✕
-                </button>
-                <button
-                  onClick={capturePhoto}
-                  className="w-20 h-20 rounded-full bg-white flex items-center justify-center shadow-lg hover:scale-105 transition-transform"
-                  type="button"
-                >
-                  <div className="w-16 h-16 rounded-full border-4 border-[var(--accent-primary)]" />
-                </button>
-                <div className="w-14 h-14" /> {/* Spacer for balance */}
-              </div>
-            </div>
-
-            <p className="text-white/60 text-center text-sm mt-4">
-              Inquadra il tuo gatto e scatta una foto
-            </p>
-          </div>
-
-          {/* Hidden canvas for capture */}
-          <canvas ref={canvasRef} className="hidden" />
-        </div>
-      )}
 
       {/* Chat Modal */}
       {showChatModal && (
@@ -1919,7 +1929,10 @@ export default function CatAnalyzer() {
                 <div>
                   <h2 className="text-heading text-[var(--text-primary)]">Chatta con Shenzy</h2>
                   <p className="text-xs text-[var(--text-tertiary)]">
-                    {5 - chatCount} messaggi rimanenti
+                    {CHAT_LIMIT - chatCount} messaggi rimanenti
+                    {chatResetTime && chatCount > 0 && (
+                      <span> • Reset tra {Math.ceil((chatResetTime - Date.now()) / (1000 * 60 * 60))}h</span>
+                    )}
                   </p>
                 </div>
               </div>
@@ -1988,20 +2001,16 @@ export default function CatAnalyzer() {
             </div>
 
             {/* Chat Input */}
-            {chatCount >= 5 ? (
+            {chatCount >= CHAT_LIMIT ? (
               <div className="card-soft p-4 text-center">
                 <p className="text-sm text-[var(--text-secondary)]">
-                  Hai raggiunto il limite di 5 messaggi.
+                  Hai raggiunto il limite di {CHAT_LIMIT} messaggi.
+                  {chatResetTime && (
+                    <span className="block mt-1">
+                      Potrai chattare di nuovo tra {Math.ceil((chatResetTime - Date.now()) / (1000 * 60 * 60))} ore.
+                    </span>
+                  )}
                 </p>
-                <button
-                  onClick={() => {
-                    setChatMessages([]);
-                    setChatCount(0);
-                  }}
-                  className="btn-secondary mt-2 text-sm"
-                >
-                  Nuova conversazione
-                </button>
               </div>
             ) : (
               <div className="flex gap-2">

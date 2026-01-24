@@ -1265,7 +1265,21 @@ export default function CatAnalyzer() {
                 icon="📝"
                 title="Nota"
                 subtitle="Appunti"
-                onClick={() => setShowQuickNoteModal(true)}
+                onClick={() => {
+                  // If no cat profile exists yet, guide user to create one first
+                  if (cats.length === 0) {
+                    setEditingCat(null);
+                    setShowProfileModal(true);
+                    return;
+                  }
+
+                  // Default to the currently selected cat (or first one) so it doesn't feel like "nothing happens"
+                  const defaultCatId = selectedCatId || cats[0]?.id || null;
+                  setQuickNoteCatId(defaultCatId);
+                  setQuickNoteSaved(false);
+                  setQuickNote('');
+                  setShowQuickNoteModal(true);
+                }}
               />
               <FeatureCard
                 icon="🗓️"
@@ -1278,6 +1292,12 @@ export default function CatAnalyzer() {
                 title="AI"
                 subtitle="Chatta"
                 onClick={() => {
+                  // Chat is still useful without a profile, but if we have none, create one first for better context
+                  if (cats.length === 0) {
+                    setEditingCat(null);
+                    setShowProfileModal(true);
+                    return;
+                  }
                   setShowChatModal(true);
                 }}
               />

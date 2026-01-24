@@ -471,10 +471,33 @@ export default function CatAnalyzer() {
   const [isChatting, setIsChatting] = useState(false);
   const [chatCount, setChatCount] = useState(0);
   const [chatResetTime, setChatResetTime] = useState<number | null>(null);
+  const [buildId, setBuildId] = useState<string>('…');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const CHAT_LIMIT = 10;
   const CHAT_RESET_HOURS = 6;
+
+  // Show a visible build/version marker to avoid "is this the new deploy?"
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/version', { cache: 'no-store' as RequestCache });
+        if (!res.ok) return;
+        const data = (await res.json()) as { shortSha?: string; ref?: string };
+        if (!cancelled) {
+          const short = data.shortSha || 'unknown';
+          const ref = data.ref ? `/${data.ref}` : '';
+          setBuildId(`${short}${ref}`);
+        }
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Load cats on mount
   useEffect(() => {
@@ -1628,6 +1651,9 @@ export default function CatAnalyzer() {
           <p className="text-caption text-[var(--text-muted)] max-w-md mx-auto">
             L'AI puo commettere errori. Non sostituisce la consulenza veterinaria.
             Per problemi di salute, consulta sempre un professionista.
+          </p>
+          <p className="mt-2 text-[11px] text-[var(--text-muted)]">
+            Build: <span className="font-mono">{buildId}</span>
           </p>
         </footer>
       </div>

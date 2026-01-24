@@ -253,12 +253,12 @@ const CatProfileModal = ({
             <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
               Colore del profilo
             </label>
-            <div className="flex gap-2 flex-wrap">
+            <div className="flex gap-3 flex-wrap">
               {CAT_COLORS.map((c) => (
                 <button
                   key={c}
                   onClick={() => setColor(c)}
-                  className={`w-8 h-8 rounded-lg transition-all ${color === c ? 'ring-2 ring-offset-2 ring-[var(--accent-primary)] scale-110' : 'hover:scale-105'}`}
+                  className={`w-12 h-12 rounded-xl transition-all ${color === c ? 'ring-3 ring-offset-2 ring-[var(--accent-primary)] scale-110' : 'hover:scale-105'}`}
                   style={{ backgroundColor: c }}
                   type="button"
                 />
@@ -1385,9 +1385,6 @@ export default function CatAnalyzer() {
                     </p>
                   </div>
                 </div>
-                <div className={`tag ${detectedMood === 'happy' || detectedMood === 'relaxed' ? 'tag-success' : 'tag-accent'}`}>
-                  {getMoodEmoji(detectedMood)} {detectedMood === 'happy' ? 'Felice' : detectedMood === 'relaxed' ? 'Rilassato' : detectedMood === 'anxious' ? 'Ansioso' : detectedMood === 'hunting' ? 'In caccia' : detectedMood === 'aggressive' ? 'Irritato' : 'Neutro'}
-                </div>
               </div>
 
               {/* Baseline Comparison */}
@@ -1503,22 +1500,6 @@ export default function CatAnalyzer() {
               />
             </div>
 
-            {/* Signals to Watch */}
-            {signals.length > 0 && (
-              <div className="card-accent p-6">
-                <h3 className="text-subheading text-[var(--text-primary)] mb-4 flex items-center gap-2">
-                  <span>👀</span> Segnali da osservare
-                </h3>
-                <ul className="space-y-3">
-                  {signals.map((signal, i) => (
-                    <li key={i} className="flex items-start gap-3 text-[var(--text-secondary)]">
-                      <span className="w-2 h-2 rounded-full bg-[var(--accent-primary)] mt-2 flex-shrink-0" />
-                      <span>{signal}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
 
             {/* Ask Shenzy */}
             <div className="card-premium p-6">

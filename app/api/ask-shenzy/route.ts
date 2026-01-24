@@ -2,10 +2,12 @@ import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { catBehaviorKnowledge } from '@/lib/cat-behavior-knowledge';
 
-const useClaude = !!process.env.ANTHROPIC_API_KEY;
-
 export const POST = async (request: Request) => {
   try {
+    if (!process.env.ANTHROPIC_API_KEY) {
+      throw new Error('ANTHROPIC_API_KEY not configured');
+    }
+
     const body = await request.json();
     const { question, previousAnalysis } = body;
 
@@ -35,9 +37,9 @@ ${question}
 Il tuo nome è Shenzy.
 
 REGOLE (CRITICHE):
-- Non parlare MAI di Claude, Grok, Anthropic, xAI, “modelli”, “prompt”, “regole”, o del fatto che sei un'AI. Niente meta.
-- Non fare preamboli tipo “Ho capito perfettamente”, “Certo!”, “Sono pronta…”, e non presentarti.
-- Rispondi subito e direttamente alla domanda usando l’analisi precedente come base.
+- Non parlare MAI di Claude, Grok, Anthropic, xAI, "modelli", "prompt", "regole", o del fatto che sei un'AI. Niente meta.
+- Non fare preamboli tipo "Ho capito perfettamente", "Certo!", "Sono pronta…", e non presentarti.
+- Rispondi subito e direttamente alla domanda usando l'analisi precedente come base.
 
 REGOLE:
 - Solo italiano
@@ -48,81 +50,34 @@ REGOLE:
 - Se non sai qualcosa, dillo onestamente
 - Niente liste puntate o strutture rigide - rispondi come in una conversazione`;
 
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const models = ['claude-3-5-haiku-latest', 'claude-3-haiku-20240307'];
     let answer = '';
+    let lastError: any = null;
 
-    if (useClaude) {
+    for (const model of models) {
       try {
-        const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-        const models = ['claude-3-5-haiku-latest', 'claude-3-haiku-20240307'];
-        let lastError: any = null;
-
-        for (const model of models) {
-          try {
-            const msg = await anthropic.messages.create({
-              model,
-              max_tokens: 512,
-              messages: [{ role: 'user', content: prompt }],
-            });
-
-            const block = msg.content.find((b) => b.type === 'text');
-            const text = block && 'text' in block ? block.text.trim() : '';
-            if (text) {
-              answer = text;
-              break;
-            }
-          } catch (err: any) {
-            lastError = err;
-            if (err.status !== 500) throw err;
-          }
-        }
-
-        if (!answer) throw lastError || new Error('Claude failed');
-      } catch (claudeError: any) {
-        console.warn('Claude fallback to Grok for follow-up:', claudeError.message);
-        // Fallback to Grok
-        const response = await fetch('https://api.x.ai/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${process.env.XAI_API_KEY}`,
-          },
-          body: JSON.stringify({
-            model: 'grok-4',
-            messages: [{ role: 'user', content: prompt }],
-            temperature: 0.7,
-          }),
+        const msg = await anthropic.messages.create({
+          model,
+          max_tokens: 512,
+          messages: [{ role: 'user', content: prompt }],
         });
 
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData?.error?.message || 'Grok error');
+        const block = msg.content.find((b) => b.type === 'text');
+        const text = block && 'text' in block ? block.text.trim() : '';
+        if (text) {
+          answer = text;
+          break;
         }
-
-        const data = await response.json();
-        answer = data.choices?.[0]?.message?.content ?? '[Nessuna risposta]';
+      } catch (err: any) {
+        lastError = err;
+        console.warn(`Ask-shenzy model ${model} failed:`, err.message);
+        if (err.status !== 500) throw err;
       }
-    } else {
-      // Grok only
-      const response = await fetch('https://api.x.ai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${process.env.XAI_API_KEY}`,
-        },
-        body: JSON.stringify({
-          model: 'grok-4',
-          messages: [{ role: 'user', content: prompt }],
-          temperature: 0.7,
-        }),
-      });
+    }
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData?.error?.message || 'Grok error');
-      }
-
-      const data = await response.json();
-      answer = data.choices?.[0]?.message?.content ?? '[Nessuna risposta]';
+    if (!answer) {
+      throw lastError || new Error('Claude failed');
     }
 
     return NextResponse.json({ answer });

@@ -67,19 +67,13 @@ const ShenzyMascot = ({ mood = 'neutral', size = 'lg' }: { mood?: 'neutral' | 't
   );
 };
 
-// Premium progress indicator
-const ProgressIndicator = ({ progress }: { progress: number }) => {
+// Simple loading indicator
+const LoadingIndicator = () => {
   return (
-    <div className="space-y-3">
-      <div className="flex justify-between items-center">
-        <span className="text-sm font-medium text-[var(--text-secondary)]">
-          {progress < 40 ? 'Preparazione...' : progress < 70 ? 'Estrazione frame...' : progress < 90 ? 'Analisi in corso...' : 'Quasi fatto...'}
-        </span>
-        <span className="text-sm font-semibold text-[var(--accent-primary)]">{Math.round(progress)}%</span>
-      </div>
-      <div className="progress-bar">
-        <div className="progress-bar-fill" style={{ width: `${progress}%` }} />
-      </div>
+    <div className="text-center py-4">
+      <p className="text-lg font-medium text-[var(--text-secondary)] animate-pulse">
+        Shenzy sta analizzando, un attimino!
+      </p>
     </div>
   );
 };
@@ -1348,9 +1342,8 @@ export default function CatAnalyzer() {
               <div className="space-y-6">
                 <div className="flex items-center justify-center gap-4">
                   <ShenzyMascot mood="thinking" size="sm" />
-                  <span className="font-medium text-[var(--text-secondary)]">Shenzy sta analizzando...</span>
                 </div>
-                <ProgressIndicator progress={progress} />
+                <LoadingIndicator />
               </div>
             ) : (
               <button onClick={reset} className="btn-secondary w-full">

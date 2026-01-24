@@ -2,19 +2,23 @@ import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { catBehaviorKnowledge } from '@/lib/cat-behavior-knowledge';
 
-const useClaudeMouth = !!process.env.ANTHROPIC_API_KEY;
-
-/** Step 1: Grok vision-only — raw description, no personality */
-async function grokDescribe(
+/** Step 1: Claude Haiku vision — raw description, no personality */
+async function claudeDescribe(
   imageContents: { type: 'image_url'; image_url: { url: string } }[],
   isVideo: boolean,
   imageCount: number
 ): Promise<string> {
+  if (!process.env.ANTHROPIC_API_KEY) {
+    throw new Error('ANTHROPIC_API_KEY not configured');
+  }
+
+  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
   const context = isVideo
     ? `These are ${imageCount} frames from a short cat video.`
     : `This is a single photo of a cat.`;
 
-  const grokPrompt = `${context}
+  const visionPrompt = `${context}
 
 You are a neutral observer. Describe ONLY what you see. Use English. Be factual and concise.
 
@@ -33,39 +37,59 @@ Report (ONLY for real cats):
 
 No interpretation, no advice, no personality. Output raw observations only.`;
 
-  const payload = {
-    model: 'grok-4',
-    messages: [
-      {
-        role: 'user',
-        content: [
-          { type: 'text', text: grokPrompt },
-          ...imageContents,
-        ],
-      },
-    ],
-    temperature: 0.3,
-  };
+  // Convert data URLs to Claude's image format
+  const imageBlocks: Anthropic.ImageBlockParam[] = imageContents.map((img) => {
+    // Extract base64 data and media type from data URL
+    const dataUrl = img.image_url.url;
+    const matches = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+    if (!matches) {
+      throw new Error('Invalid image data URL format');
+    }
+    const mediaType = matches[1] as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+    const base64Data = matches[2];
 
-  const res = await fetch('https://api.x.ai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${process.env.XAI_API_KEY}`,
-    },
-    body: JSON.stringify(payload),
+    return {
+      type: 'image' as const,
+      source: {
+        type: 'base64' as const,
+        media_type: mediaType,
+        data: base64Data,
+      },
+    };
   });
 
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err?.error?.message || 'Grok vision error');
+  // Build content array with text prompt and images
+  const content: (Anthropic.TextBlockParam | Anthropic.ImageBlockParam)[] = [
+    { type: 'text', text: visionPrompt },
+    ...imageBlocks,
+  ];
+
+  // Try Haiku models
+  const models = ['claude-3-5-haiku-latest', 'claude-3-haiku-20240307'];
+  let lastError: any = null;
+
+  for (const model of models) {
+    try {
+      const msg = await anthropic.messages.create({
+        model,
+        max_tokens: 1024,
+        messages: [{ role: 'user', content }],
+      });
+
+      const block = msg.content.find((b) => b.type === 'text');
+      const text = block && 'text' in block ? block.text.trim() : '';
+      if (text) return text;
+    } catch (err: any) {
+      lastError = err;
+      console.warn(`Claude vision model ${model} failed:`, err.message);
+      if (err.status !== 500) throw err;
+    }
   }
 
-  const data = await res.json();
-  return data.choices?.[0]?.message?.content?.trim() ?? '';
+  throw lastError || new Error('Claude vision failed');
 }
 
-/** Step 2: Claude writes Shenzy-style Italian analysis from Grok's description */
+/** Step 2: Claude writes Shenzy-style Italian analysis from the visual description */
 async function claudeSpeak(
   visualDescription: string,
   isVideo: boolean,
@@ -97,7 +121,7 @@ async function claudeSpeak(
 
 ---
 
-VISUAL DESCRIPTION (from another system) — ${context}:
+VISUAL DESCRIPTION — ${context}:
 
 ${visualDescription}
 ${catNameText}${homeContextText}
@@ -107,8 +131,8 @@ ${catNameText}${homeContextText}
 Il tuo nome è Shenzy.
 
 REGOLE (CRITICHE):
-- Non parlare MAI di Claude, Grok, Anthropic, xAI, “modelli”, “prompt”, “regole”, o del fatto che sei un'AI. Niente meta-discorsi.
-- Vietato iniziare con “Ho capito perfettamente”, “Certo!”, “Sono pronta…”, o presentazioni su chi sei.
+- Non parlare MAI di Claude, Grok, Anthropic, xAI, "modelli", "prompt", "regole", o del fatto che sei un'AI. Niente meta-discorsi.
+- Vietato iniziare con "Ho capito perfettamente", "Certo!", "Sono pronta…", o presentazioni su chi sei.
 - Parti subito dal gatto che hai davanti: usa SEMPRE dettagli concreti dalla descrizione visiva.
 
 CASO SPECIALE — CONTENUTO NON REALE:
@@ -118,8 +142,8 @@ Se la descrizione visiva inizia con "NOT A REAL CAT:", allora:
 - Non inventare nessuna analisi comportamentale.
 
 STILE:
-- Italiano naturale, caldo, “gattoso”, ma senza teatralità finta.
-- Niente liste puntate, niente sezioni, niente titoli tipo “Cosa vedi/come si sente/cosa vuole”.
+- Italiano naturale, caldo, "gattoso", ma senza teatralità finta.
+- Niente liste puntate, niente sezioni, niente titoli tipo "Cosa vedi/come si sente/cosa vuole".
 - Usa **grassetto** solo per 1–3 parole davvero importanti, mai per organizzare il testo.
 - Massimo 250–300 parole.
 
@@ -131,183 +155,74 @@ CONTENUTO:
 CHIUSURA:
 Chiudi con UNA sola azione concreta e immediata, in una frase semplice (senza header), tipo: "Se vuoi fare una cosa adesso: ...".`;
 
-  try {
-    // Try newer model first, fallback to older stable one
-    const models = ['claude-3-5-haiku-latest', 'claude-3-haiku-20240307'];
-    let lastError: any = null;
+  // Try newer model first, fallback to older stable one
+  const models = ['claude-3-5-haiku-latest', 'claude-3-haiku-20240307'];
+  let lastError: any = null;
 
-    for (const model of models) {
-      try {
-        const msg = await anthropic.messages.create({
-          model,
-          max_tokens: 1024,
-          temperature: 1.0, // Maximum temperature for most natural, creative output
-          messages: [{ role: 'user', content: userMessage }],
+  for (const model of models) {
+    try {
+      const msg = await anthropic.messages.create({
+        model,
+        max_tokens: 1024,
+        temperature: 1.0, // Maximum temperature for most natural, creative output
+        messages: [{ role: 'user', content: userMessage }],
+      });
+
+      const block = msg.content.find((b) => b.type === 'text');
+      let text = block && 'text' in block ? block.text.trim() : '';
+
+      // Post-processing: Aggressively remove any structured headers and sections
+      if (text) {
+        // Remove headers anywhere in text (not just start of line)
+        const headerPatterns = [
+          /\*\*Cosa vedi:\*\*/gi,
+          /Cosa vedi:/gi,
+          /\*\*Come si sente:\*\*/gi,
+          /Come si sente:/gi,
+          /\*\*Cosa vuole:\*\*/gi,
+          /Cosa vuole:/gi,
+          /\*\*Consigli pratici:\*\*/gi,
+          /Consigli pratici:/gi,
+          /\*\*Segnali da osservare:\*\*/gi,
+          /Segnali da osservare:/gi,
+        ];
+
+        headerPatterns.forEach(pattern => {
+          text = text.replace(pattern, '');
         });
 
-        const block = msg.content.find((b) => b.type === 'text');
-        let text = block && 'text' in block ? block.text.trim() : '';
-        
-        // Post-processing: Aggressively remove any structured headers and sections
-        if (text) {
-          // Remove headers anywhere in text (not just start of line)
-          const headerPatterns = [
-            /\*\*Cosa vedi:\*\*/gi,
-            /Cosa vedi:/gi,
-            /\*\*Come si sente:\*\*/gi,
-            /Come si sente:/gi,
-            /\*\*Cosa vuole:\*\*/gi,
-            /Cosa vuole:/gi,
-            /\*\*Consigli pratici:\*\*/gi,
-            /Consigli pratici:/gi,
-            /\*\*Segnali da osservare:\*\*/gi,
-            /Segnali da osservare:/gi,
-          ];
-          
-          headerPatterns.forEach(pattern => {
-            text = text.replace(pattern, '');
-          });
-          
-          // Remove lines that are just headers or empty
-          text = text
-            .split('\n')
-            .map((line: string) => line.trim())
-            .filter((line: string) => {
-              // Remove lines that are just headers or very short header-like phrases
-              const lower = line.toLowerCase();
-              return line.length > 3 && 
-                     !lower.startsWith('cosa vedi') &&
-                     !lower.startsWith('come si sente') &&
-                     !lower.startsWith('cosa vuole') &&
-                     !lower.startsWith('consigli') &&
-                     !lower.startsWith('segnali');
-            })
-            .join('\n')
-            .replace(/\n\s*\n\s*\n+/g, '\n\n') // Clean up excessive line breaks
-            .trim();
-        }
-        
-        if (text) return text;
-      } catch (err: any) {
-        lastError = err;
-        console.warn(`Claude model ${model} failed:`, err.message);
-        // If it's not a 500, don't retry (likely auth/format issue)
-        if (err.status !== 500) throw err;
-        // Otherwise try next model
+        // Remove lines that are just headers or empty
+        text = text
+          .split('\n')
+          .map((line: string) => line.trim())
+          .filter((line: string) => {
+            // Remove lines that are just headers or very short header-like phrases
+            const lower = line.toLowerCase();
+            return line.length > 3 &&
+                   !lower.startsWith('cosa vedi') &&
+                   !lower.startsWith('come si sente') &&
+                   !lower.startsWith('cosa vuole') &&
+                   !lower.startsWith('consigli') &&
+                   !lower.startsWith('segnali');
+          })
+          .join('\n')
+          .replace(/\n\s*\n\s*\n+/g, '\n\n') // Clean up excessive line breaks
+          .trim();
       }
+
+      if (text) return text;
+    } catch (err: any) {
+      lastError = err;
+      console.warn(`Claude model ${model} failed:`, err.message);
+      // If it's not a 500, don't retry (likely auth/format issue)
+      if (err.status !== 500) throw err;
+      // Otherwise try next model
     }
-
-    throw lastError || new Error('All Claude models failed');
-  } catch (error: any) {
-    console.error('Claude API error:', error);
-    // Re-throw to trigger fallback to Grok
-    throw error;
   }
+
+  throw lastError || new Error('All Claude models failed');
 }
 
-/** Legacy: Grok does vision + response in one call */
-async function grokFull(
-  imageContents: { type: 'image_url'; image_url: { url: string } }[],
-  isVideo: boolean,
-  imageCount: number,
-  catName?: string
-): Promise<string> {
-  const analysisRequest = isVideo
-    ? `Analizza questo video di un gatto (${imageCount} frame estratti).`
-    : `Analizza questa foto di un gatto.`;
-
-  const catNameText = catName ? `Il gatto si chiama ${catName}.` : '';
-
-  const userMessage = `${catBehaviorKnowledge}
-
-${analysisRequest}
-${catNameText}
-
-Il tuo nome è Shenzy.
-
-IMPORTANTE: Rispondi SOLO in italiano.
-
-COME SCRIVI:
-Non parlare MAI di Claude, Grok, Anthropic, xAI, “modelli”, o del prompt. Niente meta.
-Vietato preamboli tipo “Ho capito perfettamente” o presentazioni.
-Scrivi in prosa naturale e fluida (niente liste puntate, niente sezioni, niente “Cosa vedi/come si sente”).
-Usa dettagli concreti di orecchie/coda/pupille/postura/espressione.
-Chiudi con UNA sola azione concreta e immediata in una frase semplice (senza header), tipo: "Se vuoi fare una cosa adesso: ...".
-
-SUL PESO: Solo se il gatto è ESTREMAMENTE OBESO, menzionalo. Altrimenti ignora - la maggior parte dei gatti ha pancia quando sdraiati, è normale.
-
-REGOLE:
-- Solo italiano
-- Max 250–300 parole
-- Tono: curioso, affascinato, caldo
-`;
-
-  const payload = {
-    model: 'grok-4',
-    messages: [
-      { role: 'user', content: [{ type: 'text', text: userMessage }, ...imageContents] },
-    ],
-    temperature: 0.9, // Higher temperature for more natural output
-  };
-
-  const res = await fetch('https://api.x.ai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${process.env.XAI_API_KEY}`,
-    },
-    body: JSON.stringify(payload),
-  });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err?.error?.message || 'Grok error');
-  }
-
-  const data = await res.json();
-  let text = data.choices?.[0]?.message?.content ?? '[Nessuna risposta]';
-  
-  // Post-processing: Aggressively remove any structured headers and sections
-  if (text && text !== '[Nessuna risposta]') {
-    // Remove headers anywhere in text (not just start of line)
-    const headerPatterns = [
-      /\*\*Cosa vedi:\*\*/gi,
-      /Cosa vedi:/gi,
-      /\*\*Come si sente:\*\*/gi,
-      /Come si sente:/gi,
-      /\*\*Cosa vuole:\*\*/gi,
-      /Cosa vuole:/gi,
-      /\*\*Consigli pratici:\*\*/gi,
-      /Consigli pratici:/gi,
-      /\*\*Segnali da osservare:\*\*/gi,
-      /Segnali da osservare:/gi,
-    ];
-    
-    headerPatterns.forEach(pattern => {
-      text = text.replace(pattern, '');
-    });
-    
-    // Remove lines that are just headers or empty
-    text = text
-      .split('\n')
-      .map((line: string) => line.trim())
-      .filter((line: string) => {
-        // Remove lines that are just headers or very short header-like phrases
-        const lower = line.toLowerCase();
-        return line.length > 3 && 
-               !lower.startsWith('cosa vedi') &&
-               !lower.startsWith('come si sente') &&
-               !lower.startsWith('cosa vuole') &&
-               !lower.startsWith('consigli') &&
-               !lower.startsWith('segnali');
-      })
-      .join('\n')
-      .replace(/\n\s*\n\s*\n+/g, '\n\n') // Clean up excessive line breaks
-      .trim();
-  }
-  
-  return text;
-}
 
 export const POST = async (request: Request) => {
   try {
@@ -342,29 +257,22 @@ export const POST = async (request: Request) => {
 
     const imageContents = await Promise.all(imagePromises);
 
-    console.log('🐱 Analisi gatto:', {
-      pipeline: useClaudeMouth ? 'grok-eyes + claude-mouth' : 'grok-only',
+    console.log('🐱 Analisi gatto (100% Claude):', {
+      pipeline: 'claude-vision + claude-speak',
       imageCount: images.length,
       isVideo,
       catName: catName || 'unnamed',
       hasHomeContext: !!homeContext,
     });
 
-    let analysis: string;
-
-    if (useClaudeMouth) {
-      try {
-        const description = await grokDescribe(imageContents, isVideo, images.length);
-        if (!description) throw new Error('Grok non ha restituito una descrizione');
-        analysis = await claudeSpeak(description, isVideo, catName || undefined, homeContext);
-      } catch (claudeError: any) {
-        console.warn('Claude fallback to Grok:', claudeError.message);
-        // Fallback to Grok if Claude fails
-        analysis = await grokFull(imageContents, isVideo, images.length, catName || undefined);
-      }
-    } else {
-      analysis = await grokFull(imageContents, isVideo, images.length, catName || undefined);
+    // Step 1: Claude Haiku analyzes the images
+    const description = await claudeDescribe(imageContents, isVideo, images.length);
+    if (!description) {
+      throw new Error('Claude non ha restituito una descrizione');
     }
+
+    // Step 2: Claude Haiku writes the warm Italian analysis
+    const analysis = await claudeSpeak(description, isVideo, catName || undefined, homeContext);
 
     return NextResponse.json({
       analysis,

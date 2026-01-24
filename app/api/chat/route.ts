@@ -1,8 +1,14 @@
 import { NextResponse } from 'next/server';
+import Anthropic from '@anthropic-ai/sdk';
 import { catBehaviorKnowledge } from '@/lib/cat-behavior-knowledge';
 
 export const POST = async (request: Request) => {
   try {
+    if (!process.env.ANTHROPIC_API_KEY) {
+      throw new Error('ANTHROPIC_API_KEY not configured');
+    }
+
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const body = await request.json();
 
     // Support both legacy format (messages array) and new simple format (message string)
@@ -10,7 +16,7 @@ export const POST = async (request: Request) => {
       // New simple chat format for Shenzy chat
       const { message, catName } = body;
 
-      const systemPrompt = `${catBehaviorKnowledge}
+      const prompt = `${catBehaviorKnowledge}
 
 ---
 
@@ -27,81 +33,88 @@ STILE:
 - Tono: caldo, curioso, appassionato di gatti
 - Usa **grassetto** per 1-2 parole chiave importanti
 - Se non sai qualcosa, dillo onestamente
-- Rispondi come in una conversazione naturale`;
+- Rispondi come in una conversazione naturale
 
-      const payload = {
-        model: 'grok-4',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: message },
-        ],
-        temperature: 0.8,
-        max_tokens: 300,
-      };
+---
 
-      const response = await fetch('https://api.x.ai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${process.env.XAI_API_KEY}`,
-        },
-        body: JSON.stringify(payload),
-      });
+DOMANDA DELL'UTENTE:
+${message}`;
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        console.error('xAI API error:', errorData);
-        return NextResponse.json(
-          { error: 'Errore nella risposta' },
-          { status: response.status }
-        );
+      const models = ['claude-3-5-haiku-latest', 'claude-3-haiku-20240307'];
+      let reply = '';
+      let lastError: any = null;
+
+      for (const model of models) {
+        try {
+          const msg = await anthropic.messages.create({
+            model,
+            max_tokens: 300,
+            messages: [{ role: 'user', content: prompt }],
+          });
+
+          const block = msg.content.find((b) => b.type === 'text');
+          const text = block && 'text' in block ? block.text.trim() : '';
+          if (text) {
+            reply = text;
+            break;
+          }
+        } catch (err: any) {
+          lastError = err;
+          console.warn(`Chat model ${model} failed:`, err.message);
+          if (err.status !== 500) throw err;
+        }
       }
 
-      const data = await response.json();
-      const reply = data.choices?.[0]?.message?.content ?? 'Mi dispiace, non ho capito. Riprova!';
+      if (!reply) {
+        throw lastError || new Error('Claude chat failed');
+      }
 
       return NextResponse.json({ reply });
     }
 
     // Legacy format with messages array
-    const { messages, hasImage } = body as {
+    const { messages } = body as {
       messages: any[];
-      hasImage?: boolean;
     };
 
     if (!messages || !Array.isArray(messages)) {
       return NextResponse.json({ error: 'Invalid messages format' }, { status: 400 });
     }
 
-    const model = 'grok-4';
+    // Convert messages to Claude format
+    const claudeMessages = messages.map((m) => ({
+      role: m.role as 'user' | 'assistant',
+      content: m.content,
+    }));
 
-    const payload: any = {
-      model,
-      messages,
-      temperature: 0.8,
-    };
+    const models = ['claude-3-5-haiku-latest', 'claude-3-haiku-20240307'];
+    let content = '';
+    let lastError: any = null;
 
-    const response = await fetch('https://api.x.ai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${process.env.XAI_API_KEY}`,
-      },
-      body: JSON.stringify(payload),
-    });
+    for (const model of models) {
+      try {
+        const msg = await anthropic.messages.create({
+          model,
+          max_tokens: 1024,
+          messages: claudeMessages,
+        });
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      console.error('xAI API error:', errorData);
-      return NextResponse.json(
-        { error: 'Grok error', details: errorData },
-        { status: response.status }
-      );
+        const block = msg.content.find((b) => b.type === 'text');
+        const text = block && 'text' in block ? block.text.trim() : '';
+        if (text) {
+          content = text;
+          break;
+        }
+      } catch (err: any) {
+        lastError = err;
+        console.warn(`Chat model ${model} failed:`, err.message);
+        if (err.status !== 500) throw err;
+      }
     }
 
-    const data = await response.json();
-
-    const content = data.choices?.[0]?.message?.content ?? '[Nessuna risposta]';
+    if (!content) {
+      throw lastError || new Error('Claude chat failed');
+    }
 
     return NextResponse.json({ response: content });
   } catch (error: any) {

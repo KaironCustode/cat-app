@@ -32,6 +32,7 @@ Report (ONLY for real cats):
 - Pupils (dilated, slit, normal)
 - Body posture (crouching, stretched, arched, loaf, etc.)
 - Face/expression (eyes closed, wide open, blinking, etc.)
+- Location/context: IMPORTANT - describe WHERE the cat is. If the cat is IN or ON a litter box, explicitly state "cat is in litter box" - this likely means the cat is using it for its intended purpose (urinating or defecating), NOT resting or sleeping. Do not romanticize a cat in a litter box as "relaxing" or "finding a safe spot."
 - Body condition: CRITICAL - ONLY mention "overweight" or "appears overweight" if the cat is EXTREMELY OBESE (morbidly obese, cannot see ribs or waist from ANY angle, belly hangs down significantly when standing, body is clearly wider than normal by 50%+). DO NOT mention "prominent belly", "round", "chubby", "pudgy", or any weight-related terms for normal cats, slightly chubby cats, cats lying down, cats in certain postures, or cats that just look well-fed. Most cats have a slight belly when lying down - this is NORMAL. Only report overweight if it's unmistakable, severe obesity that would be obvious to any veterinarian. When in doubt, DO NOT mention weight at all.
 - If multiple frames: note any changes over time.
 
@@ -151,6 +152,7 @@ CONTENUTO:
 - Mescola osservazioni (orecchie, coda, pupille, postura, espressione) e significato in un unico flusso conversazionale.
 - Se hai il contesto casa, usalo con delicatezza (senza forzare).
 - SUL PESO: solo se la descrizione dice esplicitamente "overweight" o "appears overweight", menziona (in modo naturale) il consiglio: prevalenza umido, crocchette solo come premio (5–10 al giorno). Altrimenti NON parlarne.
+- LETTIERA: se la descrizione dice che il gatto è nella lettiera, è OVVIO che sta facendo i suoi bisogni (pipì o cacca). Non romanticizzare dicendo che "sta riposando" o "ha scelto un rifugio sicuro". Dì semplicemente che sta usando la lettiera, è normale, e passa oltre. Non serve analizzare poeticamente un gatto che fa la cacca!
 
 CHIUSURA:
 Chiudi con UNA sola azione concreta e immediata, in una frase semplice (senza header), tipo: "Se vuoi fare una cosa adesso: ...".`;

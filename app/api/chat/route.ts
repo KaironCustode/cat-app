@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
-import { catBehaviorKnowledge } from '@/lib/cat-behavior-knowledge';
+import { buildSystemPrompt, buildDailyAnchorPrompt, buildLogResponsePrompt, buildSummaryPrompt } from '@/lib/spark-ai';
 
 export const POST = async (request: Request) => {
   try {
@@ -11,93 +11,69 @@ export const POST = async (request: Request) => {
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const body = await request.json();
 
-    // Support both legacy format (messages array) and new simple format (message string)
-    if (body.message) {
-      // New simple chat format for Shenzy chat
-      const { message, catName } = body;
-
-      const prompt = `${catBehaviorKnowledge}
-
----
-
-Il tuo nome è Shenzy.
-
-REGOLE (CRITICHE):
-- Non parlare MAI di Claude, Grok, Anthropic, xAI, "modelli", "prompt", "regole", o del fatto che sei un'AI. Niente meta.
-- Non fare preamboli tipo "Certo!", "Assolutamente!", "Grande domanda!". Rispondi direttamente.
-${catName ? `- L'utente ha un gatto di nome ${catName}.` : ''}
-- Parla SOLO del mondo felino (gatti). Se l'utente chiede altro, rifiuta gentilmente in una frase e riporta la conversazione sui gatti.
-- Se la domanda è medica/veterinaria: dai solo informazioni generali e prudenti, senza diagnosi; suggerisci di sentire il veterinario se ci sono sintomi importanti o dubbi.
-
-STILE:
-- Rispondi in italiano
-- Max 100 parole
-- Tono: caldo, curioso, appassionato di gatti
-- Usa **grassetto** per 1-2 parole chiave importanti
-- Se non sai qualcosa, dillo onestamente
-- Rispondi come in una conversazione naturale
-
----
-
-DOMANDA DELL'UTENTE:
-${message}`;
-
-      const models = ['claude-3-5-haiku-latest', 'claude-3-haiku-20240307'];
-      let reply = '';
-      let lastError: any = null;
-
-      for (const model of models) {
-        try {
-          const msg = await anthropic.messages.create({
-            model,
-            max_tokens: 300,
-            messages: [{ role: 'user', content: prompt }],
-          });
-
-          const block = msg.content.find((b) => b.type === 'text');
-          const text = block && 'text' in block ? block.text.trim() : '';
-          if (text) {
-            reply = text;
-            break;
-          }
-        } catch (err: any) {
-          lastError = err;
-          console.warn(`Chat model ${model} failed:`, err.message);
-          if (err.status !== 500) throw err;
-        }
-      }
-
-      if (!reply) {
-        throw lastError || new Error('Claude chat failed');
-      }
-
-      return NextResponse.json({ reply });
-    }
-
-    // Legacy format with messages array
-    const { messages } = body as {
-      messages: any[];
+    const { messages, contextDocument, mode } = body as {
+      messages: { role: string; content: string; imageUrl?: string }[];
+      contextDocument: string;
+      mode: 'chat' | 'daily-anchor' | 'daily-log-response' | 'emergency' | 'summary';
     };
 
-    if (!messages || !Array.isArray(messages)) {
-      return NextResponse.json({ error: 'Invalid messages format' }, { status: 400 });
+    let systemPrompt: string;
+    let maxTokens: number;
+
+    switch (mode) {
+      case 'daily-anchor':
+        systemPrompt = buildDailyAnchorPrompt(contextDocument);
+        maxTokens = 1000;
+        break;
+      case 'daily-log-response':
+        systemPrompt = buildLogResponsePrompt(contextDocument, messages[messages.length - 1]?.content || '');
+        maxTokens = 300;
+        break;
+      case 'emergency':
+        systemPrompt = buildSystemPrompt(contextDocument) + '\n\nThe user is in crisis mode - they are about to relapse. Be grounding, brief, and direct. Remind them of their progress and why they quit. No lectures.';
+        maxTokens = 300;
+        break;
+      case 'summary':
+        systemPrompt = buildSummaryPrompt(contextDocument, messages[messages.length - 1]?.content || '');
+        maxTokens = 500;
+        break;
+      default:
+        systemPrompt = buildSystemPrompt(contextDocument);
+        maxTokens = 500;
     }
 
-    // Convert messages to Claude format
-    const claudeMessages = messages.map((m) => ({
-      role: m.role as 'user' | 'assistant',
-      content: m.content,
-    }));
+    // Build Claude messages - supports Vision image content blocks
+    const claudeMessages: Anthropic.MessageParam[] = messages.map((m) => {
+      if (m.imageUrl && m.role === 'user') {
+        const match = m.imageUrl.match(/^data:(image\/[a-z+]+);base64,(.+)$/);
+        if (match) {
+          const mediaType = match[1] as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+          const base64Data = match[2];
+          const contentBlocks: Anthropic.ContentBlockParam[] = [
+            {
+              type: 'image',
+              source: { type: 'base64', media_type: mediaType, data: base64Data },
+            },
+          ];
+          if (m.content) {
+            contentBlocks.push({ type: 'text', text: m.content });
+          }
+          return { role: 'user' as const, content: contentBlocks };
+        }
+      }
+      return { role: m.role as 'user' | 'assistant', content: m.content };
+    });
 
-    const models = ['claude-3-5-haiku-latest', 'claude-3-haiku-20240307'];
+    const models = ['claude-sonnet-4-20250514', 'claude-3-5-haiku-latest'];
     let content = '';
-    let lastError: any = null;
+    let lastError: unknown = null;
 
     for (const model of models) {
       try {
         const msg = await anthropic.messages.create({
           model,
-          max_tokens: 1024,
+          max_tokens: maxTokens,
+          system: systemPrompt,
           messages: claudeMessages,
         });
 
@@ -107,22 +83,24 @@ ${message}`;
           content = text;
           break;
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         lastError = err;
-        console.warn(`Chat model ${model} failed:`, err.message);
-        if (err.status !== 500) throw err;
+        const error = err as { message?: string; status?: number };
+        console.warn(`Chat model ${model} failed:`, error.message);
+        if (error.status !== 500) throw err;
       }
     }
 
     if (!content) {
-      throw lastError || new Error('Claude chat failed');
+      throw lastError || new Error('AI response failed');
     }
 
     return NextResponse.json({ response: content });
-  } catch (error: any) {
-    console.error('Route error:', error);
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('Route error:', err);
     return NextResponse.json(
-      { error: error.message || 'Errore interno' },
+      { error: err.message || 'Internal error' },
       { status: 500 }
     );
   }

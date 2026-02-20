@@ -1,22 +1,20 @@
 {
-  "name": "shenzy-cat-analyzer",
+  "name": "spark-sobriety-companion",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3001",
     "build": "next build",
+    "build:clean": "node -e \"require('fs').rmSync('.next',{recursive:true,force:true,maxRetries:10,retryDelay:100})\" && next build",
     "start": "next start -p 3001",
     "lint": "eslint"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.71.2",
-    "@types/react-syntax-highlighter": "^15.5.13",
+    "framer-motion": "^12.29.0",
     "next": "^14.2.35",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "react-syntax-highlighter": "^16.1.0",
-    "tesseract.js": "^7.0.0",
-    "three": "^0.182.0"
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

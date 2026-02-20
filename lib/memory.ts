@@ -1,14 +1,13 @@
 import { Message, Conversation, MemoryStore } from './types';
 
-const STORAGE_KEY = 'aletheia_memory';
+const STORAGE_KEY = 'spark_memory';
 
-// Initialize memory from localStorage (browser storage)
 export function loadMemory(): MemoryStore {
   if (typeof window === 'undefined') return { conversations: [], currentConversationId: null };
-  
+
   const stored = localStorage.getItem(STORAGE_KEY);
   if (!stored) return { conversations: [], currentConversationId: null };
-  
+
   try {
     return JSON.parse(stored);
   } catch {
@@ -16,13 +15,11 @@ export function loadMemory(): MemoryStore {
   }
 }
 
-// Save memory to localStorage
 export function saveMemory(memory: MemoryStore): void {
   if (typeof window === 'undefined') return;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(memory));
 }
 
-// Create new conversation
 export function createConversation(): Conversation {
   return {
     id: Date.now().toString(),
@@ -32,7 +29,6 @@ export function createConversation(): Conversation {
   };
 }
 
-// Add message to conversation
 export function addMessage(conversation: Conversation, message: Message): Conversation {
   return {
     ...conversation,
@@ -41,26 +37,21 @@ export function addMessage(conversation: Conversation, message: Message): Conver
   };
 }
 
-// Get current conversation or create new one
 export function getCurrentConversation(memory: MemoryStore): Conversation {
   if (memory.currentConversationId) {
     const current = memory.conversations.find(c => c.id === memory.currentConversationId);
     if (current) return current;
   }
-  
-  // Create new if none exists
-  const newConv = createConversation();
-  return newConv;
+  return createConversation();
 }
 
-// Update conversation in memory
 export function updateConversation(memory: MemoryStore, conversation: Conversation): MemoryStore {
   const exists = memory.conversations.find(c => c.id === conversation.id);
-  
+
   if (exists) {
     return {
       ...memory,
-      conversations: memory.conversations.map(c => 
+      conversations: memory.conversations.map(c =>
         c.id === conversation.id ? conversation : c
       ),
       currentConversationId: conversation.id,
